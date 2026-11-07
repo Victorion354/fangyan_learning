@@ -505,11 +505,38 @@ function serveStatic(req, res, url) {
     }
     const ext = path.extname(file).toLowerCase();
     const type = MIME[ext] || 'application/octet-stream';
-    const noCache = ext === '.html' || ext === '.js' || ext === '.json' || ext === '.css';
+    const versioned = url.searchParams.has('v');
+    const cacheControl = ext === '.html'
+      ? 'no-cache'
+      : (ext === '.js' || ext === '.css')
+        ? (versioned ? 'public, max-age=31536000, immutable' : 'no-cache')
+        : ext === '.json'
+          ? 'no-cache'
+          : 'public, max-age=604800';
+    const etag = '"' + stat.size.toString(16) + '-' + Math.floor(stat.mtimeMs).toString(16) + '"';
     const headers = {
       'Content-Type': type,
-      'Cache-Control': noCache ? 'no-cache' : 'public, max-age=3600'
+      'Cache-Control': cacheControl,
+      'ETag': etag,
+      'Last-Modified': stat.mtime.toUTCString(),
+      'Accept-Ranges': 'bytes'
     };
+
+    const ifNoneMatch = req.headers['if-none-match'];
+    const ifModifiedSince = req.headers['if-modified-since'];
+    let notModified = false;
+    if (ifNoneMatch) {
+      notModified = ifNoneMatch.split(',').some((tag) => tag.trim() === etag || tag.trim() === '*');
+    } else if (ifModifiedSince) {
+      const since = Date.parse(ifModifiedSince);
+      notModified = Number.isFinite(since) && Math.floor(stat.mtimeMs / 1000) <= Math.floor(since / 1000);
+    }
+    if (notModified) {
+      delete headers['Content-Type'];
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
 
     const range = req.headers.range;
     if (range && /^bytes=\d*-\d*$/.test(range)) {
@@ -524,7 +551,6 @@ function serveStatic(req, res, url) {
       const safeEnd = Math.min(end, stat.size - 1);
       headers['Content-Range'] = 'bytes ' + start + '-' + safeEnd + '/' + stat.size;
       headers['Content-Length'] = safeEnd - start + 1;
-      headers['Accept-Ranges'] = 'bytes';
       res.writeHead(206, headers);
       if (req.method === 'HEAD') { res.end(); return; }
       fs.createReadStream(file, { start: start, end: safeEnd }).pipe(res);
@@ -532,7 +558,6 @@ function serveStatic(req, res, url) {
     }
 
     headers['Content-Length'] = stat.size;
-    headers['Accept-Ranges'] = 'bytes';
     res.writeHead(200, headers);
     if (req.method === 'HEAD') { res.end(); return; }
     fs.createReadStream(file).pipe(res);

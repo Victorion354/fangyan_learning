@@ -92,7 +92,7 @@ tests/                  node:test 自动化测试（共享数据 + 服务端接�
 
 ```bash
 npm start        # 等同于 node server.js
-npm run check    # 检查共享数据、页面引用、内联脚本语法、本地资源
+npm run check    # 检查共享数据、页面引用、外置脚本/样式、本地资源
 npm test         # 运行共享数据与服务端接口测试
 ```
 
@@ -100,7 +100,8 @@ npm test         # 运行共享数据与服务端接口测试
 
 - `assets/data/dialects.js` 中十个方言的必填字段、历史阶段、省份、地图范围与风俗数据；
 - 主页、详情页、社区和服务端是否仍然读取同一份共享数据；
-- 页面内联脚本与 `server.js`、`assets/community.js`、`assets/data/dialects.js` 的语法；
+- 页面引用的外置脚本与 `server.js`、`assets/community.js`、`assets/data/dialects.js` 的语法，以及外置 CSS 的花括号配对；
+- 页面是否仍残留可执行内联脚本或内联 `<style>`，避免与严格 CSP 冲突；
 - 页面里引用的本地 `assets/*` 文件是否真实存在。
 
 `npm test` 使用 Node 内置的 `node:test`，不会修改正式的 `data/community.json`。服务端测试会自动选择一个空闲端口，并把社区数据写到系统临时目录。服务端支持以下环境变量，便于测试或单独部署时隔离数据：
@@ -144,6 +145,7 @@ HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-
 
 - 主页十张方言卡片使用 `<picture>` + `srcset`（800w / 1600w）和 `sizes`，高 DPI 屏幕按需选择大图；详情页头图同样使用 800w / 1600w，并补充了宽高以避免布局跳动。
 - 详情页对 Leaflet CDN（jsDelivr，备用 unpkg）和天地图瓦片域名做 `preconnect` / `dns-prefetch`，减少地图首次加载的握手等待。
+- 静态资源返回 `ETag` 与 `Last-Modified`，支持 `304` 条件请求；带 `?v=` 版本号的 JS/CSS 使用一年期 `immutable` 缓存，图片/字体/音频缓存 7 天，HTML 与 JSON 保持 `no-cache` 以便及时更新。
 - 主页与详情页补充了 `og:image:alt`、`og:locale`、Twitter Card；详情页会按当前方言更新分享标题、描述和图片。
 - 结构化数据由共享方言数据动态生成：主页输出 `ItemList`，详情页输出 `WebPage`，不额外维护一份方言清单。
 - 本地 Lighthouse 的 SEO、无障碍与最佳实践三项，在主页和详情页均为 100 分；性能项没有作为自动化门槛，因为天地图与 Leaflet CDN 的加载速度受网络环境影响。
@@ -152,7 +154,7 @@ HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-
 ## 方言数据维护
 
 - 方言的名称、颜色、简称、省份、历史时间线、风俗、地图示意范围统一放在 `assets/data/dialects.js`。主页、详情页、乡音社区和 `server.js` 都从这里读取，新增或修改方言时不需要再改四处。
-- 主页的词汇 `WORDS`、例句 `SENTENCES`、测验 `QUIZ`、冷知识 `FACTS` 仍保存在 `方言学习页.html` 内，因为它们只被主页使用，没有跨页面重复。
+- 主页的词汇 `WORDS`、例句 `SENTENCES`、测验 `QUIZ`、冷知识 `FACTS` 仍保存在 `assets/main.js` 内，因为它们只被主页使用，没有跨页面重复。
 - 新增方言时，除数据外还需要准备 `assets/<id>.jpg` 与对应的 `-800.webp` / `-1600.webp` 配图；服务端板块列表会自动跟随 `dialects.js`。
 
 ## 地图说明

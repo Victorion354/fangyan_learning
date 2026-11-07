@@ -74,10 +74,16 @@ async function jsonFetch(pathname, options = {}) {
   return { status: res.status, headers: res.headers, data };
 }
 
-function rawRequest(pathname, method = 'GET') {
+function rawRequest(pathname, method = 'GET', extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { host: '127.0.0.1', port, path: pathname, method, headers: { Host: '127.0.0.1:' + port } },
+      {
+        host: '127.0.0.1',
+        port,
+        path: pathname,
+        method,
+        headers: Object.assign({ Host: '127.0.0.1:' + port }, extraHeaders)
+      },
       (res) => {
         const chunks = [];
         res.on('data', (chunk) => chunks.push(chunk));
@@ -175,6 +181,36 @@ test('静态页面与共享数据可正常访问', async () => {
   assert.equal(shared.status, 200);
   assert.match(shared.headers['content-type'], /javascript/);
   assert.match(shared.body, /FANGYAN_DATA/);
+});
+
+test('静态资源按版本缓存并支持条件请求', async () => {
+  const css = await rawRequest('/assets/main.css?v=20261107');
+  assert.equal(css.status, 200);
+  assert.match(css.headers['cache-control'], /max-age=31536000/);
+  assert.match(css.headers['cache-control'], /immutable/);
+  assert.ok(css.headers.etag, '应返回 ETag');
+  assert.ok(css.headers['last-modified'], '应返回 Last-Modified');
+
+  const cached = await rawRequest('/assets/main.css?v=20261107', 'GET', {
+    'If-None-Match': css.headers.etag
+  });
+  assert.equal(cached.status, 304);
+  assert.equal(cached.body, '');
+
+  const modified = await rawRequest('/assets/main.css?v=20261107', 'GET', {
+    'If-Modified-Since': css.headers['last-modified']
+  });
+  assert.equal(modified.status, 304);
+
+  const unversioned = await rawRequest('/assets/main.css');
+  assert.match(unversioned.headers['cache-control'], /no-cache/);
+
+  const html = await rawRequest('/');
+  assert.match(html.headers['cache-control'], /no-cache/);
+  assert.ok(html.headers.etag, 'HTML 也应支持条件请求');
+
+  const image = await rawRequest('/assets/beijing-800.webp');
+  assert.match(image.headers['cache-control'], /max-age=604800/);
 });
 
 test('敏感文件与路径绕过均返回 404', async () => {
