@@ -275,12 +275,25 @@ function readBody(req) {
 
 function sendJson(res, status, value) {
   const body = JSON.stringify(value);
-  res.writeHead(status, {
+  const raw = Buffer.from(body);
+  const req = res.req;
+  const headers = {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
-    'Cache-Control': 'no-store'
-  });
-  res.end(body);
+    'Cache-Control': 'no-store',
+    'Vary': 'Accept-Encoding'
+  };
+  const isHead = req && req.method === 'HEAD';
+  if (!isHead && raw.length >= 1024 && req && acceptsGzip(req.headers['accept-encoding'])) {
+    const compressed = zlib.gzipSync(raw, { level: 6 });
+    headers['Content-Encoding'] = 'gzip';
+    headers['Content-Length'] = compressed.length;
+    res.writeHead(status, headers);
+    res.end(compressed);
+    return;
+  }
+  headers['Content-Length'] = raw.length;
+  res.writeHead(status, headers);
+  res.end(isHead ? undefined : body);
 }
 
 function setSecurityHeaders(req, res) {

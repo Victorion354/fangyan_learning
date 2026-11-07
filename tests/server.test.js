@@ -215,6 +215,16 @@ test('静态资源按版本缓存并支持条件请求', async () => {
 
   const image = await rawRequest('/assets/beijing-800.webp');
   assert.match(image.headers['cache-control'], /max-age=604800/);
+
+  const head = await rawRequest('/assets/main.css?v=20261107', 'HEAD');
+  assert.equal(head.status, 200);
+  assert.equal(head.body, '');
+  assert.ok(Number(head.headers['content-length']) > 0);
+
+  const range = await rawRequest('/assets/main.css?v=20261107', 'GET', { Range: 'bytes=0-99' });
+  assert.equal(range.status, 206);
+  assert.equal(range.body.length, 100);
+  assert.match(range.headers['content-range'], /^bytes 0-99\//);
 });
 
 test('文本资源支持 gzip 压缩并区分 ETag', async () => {
@@ -483,6 +493,17 @@ test('人口接口返回公开统计与校验时间', async () => {
     assert.ok(item.name);
     assert.ok(Number.isFinite(item.value) && item.value > 0);
   }
+});
+
+test('较大的 JSON 接口响应支持 gzip', async () => {
+  const res = await fetch(base + '/api/population', {
+    headers: { 'Accept-Encoding': 'gzip' }
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-encoding'), 'gzip');
+  assert.match(res.headers.get('vary'), /Accept-Encoding/);
+  const data = await res.json();
+  assert.equal(data.items.length, 10);
 });
 
 test('未知接口返回 404 JSON', async () => {
