@@ -1,0 +1,20 @@
+{
+  "source": "中国社会科学院语言研究所等《中国语言地图集》第 2 版（2012）",
+  "basis": "人口数字依据 2004 年《中国行政区划简册》",
+  "publishedAt": "2012",
+  "basisYear": 2004,
+  "retrievedAt": "2026-11-06",
+  "note": "十个方言区没有权威的实时人口统计。这里提供的是同一口径下最新可查的公开统计，不是 2026 年实时人口；服务端每次请求会重新读取本文件并返回校验时间。",
+  "items": [
+    { "id": "beijing", "name": "官话", "chart": "官话", "value": 79858, "color": "#B07C2A" },
+    { "id": "xiamen", "name": "闽南语", "chart": "闽语*", "value": 7500, "color": "#2A5C8A" },
+    { "id": "shanghai", "name": "吴语", "chart": "吴语", "value": 7379, "color": "#2E726E" },
+    { "id": "taiyuan", "name": "晋语", "chart": "晋语", "value": 6305, "color": "#6E5B8A" },
+    { "id": "guangzhou", "name": "粤语", "chart": "粤语", "value": 5882, "color": "#C23E33" },
+    { "id": "nanchang", "name": "赣语", "chart": "赣语", "value": 4800, "color": "#3A7BA0" },
+    { "id": "meizhou", "name": "客家话", "chart": "客家话", "value": 4220, "color": "#8A6A40" },
+    { "id": "changsha", "name": "湘语", "chart": "湘语", "value": 3637, "color": "#C24A5A" },
+    { "id": "nanning", "name": "平话", "chart": "平话", "value": 778, "color": "#5E8A54" },
+    { "id": "huizhou", "name": "徽语", "chart": "徽语", "value": 330, "color": "#2E5A48" }
+  ]
+}
