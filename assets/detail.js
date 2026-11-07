@@ -556,10 +556,12 @@ function renderSeo(d){
     var el=document.querySelector(selector);
     if(el)el.setAttribute('content',value);
   };
+  setMeta('meta[property="og:image"]','assets/'+d.id+'.jpg');
   setMeta('meta[property="og:image:alt"]',d.name+' · '+d.area);
   setMeta('meta[name="twitter:title"]',d.title+' · 一声一味');
   setMeta('meta[name="twitter:description"]',d.sub);
   setMeta('meta[name="twitter:image"]','assets/'+d.id+'.jpg');
+  setMeta('meta[name="twitter:image:alt"]',d.name+' · '+d.area);
 
   var ld={
     '@context':'https://schema.org',

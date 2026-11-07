@@ -171,6 +171,10 @@ test('主页图片使用响应式 srcset，并补充分享与结构化数据', (
   assert.match(main, /sizes="\(min-width:1080px\) 220px/);
   assert.match(main, /name="twitter:card"/);
   assert.match(main, /property="og:image:alt"/);
+  assert.match(main, /property="og:site_name"/);
+  assert.match(main, /property="og:image:width" content="2508"/);
+  assert.match(main, /property="og:image:height" content="1672"/);
+  assert.match(main, /name="twitter:image:alt"/);
   assert.match(mainJs, /'@type':'ItemList'/);
   assert.match(mainJs, /application\/ld\+json/);
 });
@@ -183,7 +187,10 @@ test('详情页预连接地图依赖并输出页面结构化数据', () => {
   assert.match(detail, /width="1600" height="1067"/);
   assert.match(detailJs, /function renderSeo\(d\)/);
   assert.match(detailJs, /'@type':'WebPage'/);
+  assert.ok(detailJs.includes('meta[property="og:image"]'), '详情页应动态更新 og:image');
   assert.match(detail, /name="twitter:card"/);
+  assert.match(detail, /name="twitter:image:alt"/);
+  assert.match(detail, /property="og:image:width" content="2508"/);
 });
 
 test('试听按钮与音频标题保持可访问结构', () => {
