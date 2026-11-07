@@ -77,7 +77,42 @@ data/
 _genmap.py              重新生成 assets/mapdata.js
 _gengeo.py              重新生成 assets/chinageo.js
 _shots/                 开发过程中的验证截图
+package.json            零依赖脚本入口（start / check / test）
+scripts/check.js        静态数据、页面引用、脚本语法与本地资源检查
+tests/                  node:test 自动化测试（共享数据 + 服务端接口）
 ```
+
+## 开发与检查
+
+项目仍然保持**零运行时依赖**，只要求 Node.js 18.17 及以上。`package.json` 只提供脚本，没有 `dependencies`，不需要 `npm install`。
+
+```bash
+npm start        # 等同于 node server.js
+npm run check    # 检查共享数据、页面引用、内联脚本语法、本地资源
+npm test         # 运行共享数据与服务端接口测试
+```
+
+`npm run check` 会验证：
+
+- `assets/data/dialects.js` 中十个方言的必填字段、历史阶段、省份、地图范围与风俗数据；
+- 主页、详情页、社区和服务端是否仍然读取同一份共享数据；
+- 页面内联脚本与 `server.js`、`assets/community.js`、`assets/data/dialects.js` 的语法；
+- 页面里引用的本地 `assets/*` 文件是否真实存在。
+
+`npm test` 使用 Node 内置的 `node:test`，不会修改正式的 `data/community.json`。服务端测试会自动选择一个空闲端口，并把社区数据写到系统临时目录。服务端支持以下环境变量，便于测试或单独部署时隔离数据：
+
+```bash
+PORT=8787
+HOST=0.0.0.0
+DATA_DIR=./data                 # 数据目录，默认 ./data
+COMMUNITY_FILE=./data/community.json
+POPULATION_FILE=./data/population.json
+COMMUNITY_ADMIN_TOKEN=随机长字符串
+```
+
+测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CORS 预检、发布/删除令牌、管理员删除、点赞去重、非法输入和人口接口。
+
+`server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。目前还没有启用 CSP，因为页面包含内联脚本、样式以及 Leaflet CDN / 天地图瓦片，需要逐项验证后再加。
 
 ## 方言数据维护
 

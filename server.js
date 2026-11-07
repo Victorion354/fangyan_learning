@@ -23,9 +23,9 @@ const crypto = require('crypto');
 const FANGYAN_DATA = require('./assets/data/dialects.js');
 
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, 'data');
-const COMMUNITY_FILE = path.join(DATA_DIR, 'community.json');
-const POPULATION_FILE = path.join(DATA_DIR, 'population.json');
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
+const COMMUNITY_FILE = process.env.COMMUNITY_FILE ? path.resolve(process.env.COMMUNITY_FILE) : path.join(DATA_DIR, 'community.json');
+const POPULATION_FILE = process.env.POPULATION_FILE ? path.resolve(process.env.POPULATION_FILE) : path.join(DATA_DIR, 'population.json');
 const PORT = Number(process.env.PORT) || 8787;
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_POSTS = 500;
@@ -257,6 +257,13 @@ function sendJson(res, status, value) {
     'Cache-Control': 'no-store'
   });
   res.end(body);
+}
+
+function setSecurityHeaders(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
 }
 
 function setCors(res) {
@@ -502,6 +509,7 @@ function serveStatic(req, res, url) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost'));
+  setSecurityHeaders(res);
   setCors(res);
   if (url.pathname.startsWith('/api/')) {
     handleApi(req, res, url).catch((err) => {
