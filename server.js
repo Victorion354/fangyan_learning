@@ -435,6 +435,8 @@ function serveStatic(req, res, url) {
   let pathname;
   try {
     pathname = decodeURIComponent(url.pathname);
+    pathname = path.posix.normalize(pathname.replace(/\\/g, '/'));
+    if (pathname.charAt(0) !== '/') pathname = '/' + pathname;
   } catch (_) {
     res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Bad Request');
