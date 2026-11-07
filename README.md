@@ -83,9 +83,11 @@ data/
 _genmap.py              重新生成 assets/mapdata.js
 _gengeo.py              重新生成 assets/chinageo.js
 _shots/                 开发过程中的验证截图
-package.json            零依赖脚本入口（start / check / test）
+package.json            零依赖脚本入口（start / build / check / test）
 scripts/check.js        静态数据、页面引用、脚本语法与本地资源检查
+scripts/version-assets.js  按内容哈希刷新 JS/CSS 版本号
 tests/                  node:test 自动化测试（共享数据 + 服务端接口）
+.github/workflows/ci.yml  Node 20/22 自动检查与测试
 ```
 
 ## 开发与检查
@@ -119,9 +121,12 @@ DATA_DIR=./data                 # 数据目录，默认 ./data
 COMMUNITY_FILE=./data/community.json
 POPULATION_FILE=./data/population.json
 COMMUNITY_ADMIN_TOKEN=随机长字符串
+ALLOWED_ORIGINS=http://example.com,https://example.org
 ```
 
-测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 预检、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入和人口接口。
+`ALLOWED_ORIGINS` 用逗号分隔允许跨域调用 API 的来源；不设置时只允许同源请求。设置后同源仍然可用。如果直接用 `file://` 打开页面并连接本机服务，浏览器会发送 `Origin: null`，需要显式把 `null` 加入白名单，否则社区会回退到本地模式。
+
+测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入和人口接口。仓库还提供 `.github/workflows/ci.yml`，在 Node 20/22 上自动运行 `npm run check` 与 `npm test`。
 
 `server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。
 
@@ -202,7 +207,8 @@ HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-
 ## 乡音社区说明（主页面）
 
 - 社区入口在主页末尾 `#community`，十个方言详情页不再重复放置社区模块，只保留指向主页社区的链接。
-- **有 Node 服务时**：留言保存到 `data/community.json`，通过 `/api/community` 读写，并用 SSE（`/api/community/stream`）向所有打开的页面推送刷新事件；点赞按浏览器客户端 ID 去重。
+- **有 Node 服务时**：留言保存到 `data/community.json`，通过 `/api/community` 读写，并用 SSE（`/api/community/stream`）向所有打开的页面推送刷新事件；点赞按浏览器客户端 ID 去重。发布和点赞都要求 `X-Client-Id`，服务端会校验格式；它只能用于区分浏览器，不是账号认证。
+- **跨域限制**：API 默认只允许同源请求；需要其他站点调用时，用 `ALLOWED_ORIGINS` 显式配置白名单，预检来自未授权来源会返回 `403`。
 - **删除权限**：发布成功时服务端只向发布者返回一次随机删除令牌，浏览器把它保存在 `localStorage`（键名 `fangyan-delete-tokens-v1`）。删除时必须带上该令牌，其他人即使能看到留言也无法删除。换设备、换浏览器或清理浏览器数据后，发布者也会失去删除令牌；此时只能由设置 `COMMUNITY_ADMIN_TOKEN` 的管理员删除。
 - **没有 Node 服务时**：自动回退到纯前端本地模式，留言、语音、点赞和回复保存在当前浏览器的 `localStorage`（键名 `fangyan-community-v1`）。
 - 语音支持本地上传或浏览器录音，单个文件限制约 1.5MB；浏览器不支持录音时会提示改用上传。
@@ -230,7 +236,7 @@ HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-
 - **部分方言暂无授权录音**：官话、客家话、湘语、赣语、晋语、徽语、平话没有找到许可清晰的真人录音，页面如实留空。
 - **天地图需要自行申请 Key**：仓库不包含任何 Key；未配置时只能使用离线示意。在线底图需遵守天地图服务条款，公开发布前请确认 Key 的配额与使用范围。
 - **人口不是实时人口**：现有公开统计最晚只到 2012 年出版、2004 年人口口径，没有权威的 2026 年实时数据。
-- **社区服务仅适合本机演示**：没有账号、内容审核和隐私合规能力；删除已改为“发布令牌 + 可选管理员令牌”，发布/点赞/删除有进程内限流，但重启即清零，仍不是生产级防护。
+- **社区服务仅适合本机演示**：没有账号、内容审核和隐私合规能力；删除已改为“发布令牌 + 可选管理员令牌”，发布/点赞要求客户端标识，CORS 默认同源并支持白名单，发布/点赞/删除有进程内限流，但客户端标识可伪造、限流重启即清零，仍不是生产级防护。
 - **源码屏蔽只覆盖自带 Node 服务**：`server.js` 会拒绝访问 `server.js`、`README.md`、`*.py`、`data/`、`_backup/`、`_shots/` 等敏感路径；如果改用 `python -m http.server` 或普通静态托管，这些文件仍可能被直接下载，请不要把项目根目录原样公开到公网。
 - **共享数据已收拢**：方言名称、颜色、省份、历史、风俗和地图范围统一在 `assets/data/dialects.js`，主页、详情页、社区和服务端都从这一份数据读取；修改方言信息时只需要改这个文件。
 - **注音与用词需要母语者审校**：页面混用粤拼、白话字/台罗及近音标注，部分方言词使用民间借字或近音字写法。

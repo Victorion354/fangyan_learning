@@ -126,7 +126,8 @@ before(async () => {
       HOST: '127.0.0.1',
       COMMUNITY_FILE: communityFile,
       POPULATION_FILE: path.join(root, 'data', 'population.json'),
-      COMMUNITY_ADMIN_TOKEN: ADMIN_TOKEN
+      COMMUNITY_ADMIN_TOKEN: ADMIN_TOKEN,
+      ALLOWED_ORIGINS: 'http://allowed.example'
     }),
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -310,21 +311,65 @@ test('CSP 限制资源来源并保留地图与 CDN 白名单', async () => {
   assert.equal(res.headers['cross-origin-opener-policy'], undefined, 'HTTP 下不发送会被忽略的 COOP');
 });
 
-test('CORS 预检允许删除令牌请求头', async () => {
-  const { status, headers } = await jsonFetch('/api/community', {
+test('CORS 仅允许同源与白名单来源', async () => {
+  const same = await jsonFetch('/api/health', { headers: { Origin: base } });
+  assert.equal(same.status, 200);
+  assert.equal(same.headers.get('access-control-allow-origin'), base);
+  const vary = same.headers.get('vary') || '';
+  assert.match(vary, /Origin/);
+  assert.match(vary, /Accept-Encoding/);
+
+  const allowed = await jsonFetch('/api/community', {
     method: 'OPTIONS',
     headers: {
-      Origin: 'http://example.com',
+      Origin: 'http://allowed.example',
       'Access-Control-Request-Method': 'DELETE',
       'Access-Control-Request-Headers': 'X-Delete-Token'
     }
   });
-  assert.equal(status, 204);
-  assert.equal(headers.get('access-control-allow-origin'), '*');
-  const allowed = headers.get('access-control-allow-headers') || '';
-  assert.match(allowed, /X-Delete-Token/i);
-  assert.match(allowed, /X-Admin-Token/i);
-  assert.match(headers.get('access-control-allow-methods') || '', /DELETE/);
+  assert.equal(allowed.status, 204);
+  assert.equal(allowed.headers.get('access-control-allow-origin'), 'http://allowed.example');
+  const allowedHeaders = allowed.headers.get('access-control-allow-headers') || '';
+  assert.match(allowedHeaders, /X-Delete-Token/i);
+  assert.match(allowedHeaders, /X-Admin-Token/i);
+  assert.match(allowed.headers.get('access-control-allow-methods') || '', /DELETE/);
+
+  const blockedPreflight = await jsonFetch('/api/community', {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'http://example.com',
+      'Access-Control-Request-Method': 'DELETE'
+    }
+  });
+  assert.equal(blockedPreflight.status, 403);
+  assert.equal(blockedPreflight.headers.get('access-control-allow-origin'), null);
+
+  const blockedSimple = await jsonFetch('/api/health', {
+    headers: { Origin: 'http://example.com' }
+  });
+  assert.equal(blockedSimple.status, 200);
+  assert.equal(blockedSimple.headers.get('access-control-allow-origin'), null);
+
+  const nullOrigin = await jsonFetch('/api/health', {
+    headers: { Origin: 'null' }
+  });
+  assert.equal(nullOrigin.status, 200);
+  assert.equal(nullOrigin.headers.get('access-control-allow-origin'), null);
+});
+
+test('发布留言需要客户端标识', async () => {
+  const { status, data } = await jsonFetch('/api/community', {
+    method: 'POST',
+    body: {
+      board: 'guangzhou',
+      province: '广东省',
+      name: '无标识',
+      type: 'dialect',
+      text: '这条留言不应被创建'
+    }
+  });
+  assert.equal(status, 400);
+  assert.match(data.error, /客户端标识/);
 });
 
 test('发布留言返回一次性删除令牌且不泄漏哈希', async () => {

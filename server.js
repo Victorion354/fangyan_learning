@@ -33,6 +33,12 @@ const MAX_POSTS = 500;
 const MAX_AUDIO_CHARS = 2400000;
 const MAX_BODY_BYTES = 3200000;
 const ADMIN_TOKEN = (process.env.COMMUNITY_ADMIN_TOKEN || '').trim();
+const ALLOWED_ORIGINS = new Set(
+  String(process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((item) => item.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+);
 
 const BOARDS = new Set(FANGYAN_DATA.dialects.map((d) => d.id));
 const TYPES = new Set(['dialect', 'suggest']);
@@ -279,9 +285,9 @@ function sendJson(res, status, value) {
   const req = res.req;
   const headers = {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'Vary': 'Accept-Encoding'
+    'Cache-Control': 'no-store'
   };
+  addVary(res, 'Accept-Encoding');
   const isHead = req && req.method === 'HEAD';
   if (!isHead && raw.length >= 1024 && req && acceptsGzip(req.headers['accept-encoding'])) {
     const compressed = zlib.gzipSync(raw, { level: 6 });
@@ -326,11 +332,38 @@ function setSecurityHeaders(req, res) {
   ].join('; '));
 }
 
-function setCors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+function addVary(res, value) {
+  const current = String(res.getHeader('Vary') || '');
+  const values = new Set(current.split(',').map((item) => item.trim()).filter(Boolean));
+  values.add(value);
+  res.setHeader('Vary', Array.from(values).join(', '));
+}
+
+function requestOrigin(req) {
+  const host = req.headers.host;
+  if (!host) return null;
+  const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  const proto = forwarded || ((req.socket && req.socket.encrypted) ? 'https' : 'http');
+  return proto + '://' + host;
+}
+
+function resolveCorsOrigin(req) {
+  const origin = String(req.headers.origin || '').trim();
+  if (!origin) return null;
+  if (ALLOWED_ORIGINS.has(origin)) return origin;
+  if (origin === requestOrigin(req)) return origin;
+  return null;
+}
+
+function setCors(req, res) {
+  const origin = resolveCorsOrigin(req);
+  if (!origin) return null;
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Client-Id, X-Delete-Token, X-Admin-Token');
   res.setHeader('Access-Control-Max-Age', '86400');
+  addVary(res, 'Origin');
+  return origin;
 }
 
 function rateLimit(req, bucket, max, windowMs) {
@@ -440,6 +473,7 @@ async function handleApi(req, res, url) {
 
   if (pathname === '/api/community' && method === 'POST') {
     rateLimit(req, 'post', 20, 60000);
+    if (!clientId) throw httpError(400, '缺少客户端标识');
     const body = await readBody(req);
     const post = normalizeNewPost(body, clientId);
     const deleteToken = crypto.randomBytes(24).toString('hex');
@@ -625,8 +659,12 @@ function serveStatic(req, res, url) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost'));
   setSecurityHeaders(req, res);
-  setCors(res);
   if (url.pathname.startsWith('/api/')) {
+    const corsOrigin = setCors(req, res);
+    if (req.method === 'OPTIONS' && req.headers.origin && !corsOrigin) {
+      sendJson(res, 403, { error: '来源不在 CORS 允许列表' });
+      return;
+    }
     handleApi(req, res, url).catch((err) => {
       if (res.headersSent) {
         try { res.end(); } catch (_) {}
