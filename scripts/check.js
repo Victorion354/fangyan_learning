@@ -47,24 +47,35 @@ notes.push('共享方言数据：' + data.dialects.length + ' 个方言');
 /* 2. 页面是否使用共享数据 */
 const main = read('方言学习页.html');
 const detail = read('fangyan-detail.html');
+const mainJs = read('assets/main.js');
+const detailJs = read('assets/detail.js');
 const community = read('assets/community.js');
 const server = read('server.js');
 
-if (!main.includes('var DIALECTS=FANGYAN_DATA.dialects;')) fail('主页没有使用 FANGYAN_DATA.dialects');
-if (!detail.includes('var DET=FANGYAN_DATA.byId;')) fail('详情页没有使用 FANGYAN_DATA.byId');
+if (!mainJs.includes('var DIALECTS=FANGYAN_DATA.dialects;')) fail('主页脚本没有使用 FANGYAN_DATA.dialects');
+if (!detailJs.includes('var DET=FANGYAN_DATA.byId;')) fail('详情页脚本没有使用 FANGYAN_DATA.byId');
+if (!main.includes('src="assets/main.js')) fail('主页没有加载 assets/main.js');
+if (!detail.includes('src="assets/detail.js')) fail('详情页没有加载 assets/detail.js');
 if (!main.includes('src="assets/data/dialects.js')) fail('主页没有加载共享数据脚本');
 if (!detail.includes('src="assets/data/dialects.js')) fail('详情页没有加载共享数据脚本');
-if (main.includes('var DIALECTS=[')) fail('主页仍保留旧 DIALECTS 数据');
-if (detail.includes('var DET={')) fail('详情页仍保留旧 DET 数据');
+if (mainJs.includes('var DIALECTS=[')) fail('主页脚本仍保留旧 DIALECTS 数据');
+if (detailJs.includes('var DET={')) fail('详情页脚本仍保留旧 DET 数据');
 if (community.includes('CM_PROVINCES')) fail('社区仍保留重复的 CM_PROVINCES');
 if (!community.includes('FANGYAN_DATA')) fail('社区没有读取共享数据');
 if (!server.includes("require('./assets/data/dialects.js')")) fail('服务端没有读取共享数据');
 
 /* 3. 脚本语法 */
-for (const file of ['server.js', 'assets/community.js', 'assets/data/dialects.js']) {
+const scriptFiles = new Set(['server.js']);
+for (const html of [main, detail]) {
+  const re = /<script[^>]+src="(assets\/[^"?#]+\.js)(?:[?#][^"]*)?"/g;
+  let match;
+  while ((match = re.exec(html))) scriptFiles.add(match[1]);
+}
+for (const file of scriptFiles) {
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { encoding: 'utf8' });
   if (result.status !== 0) fail(file + ' 语法错误：' + (result.stderr || '').trim());
 }
+notes.push('脚本语法：' + scriptFiles.size + ' 个文件');
 
 for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.html', detail]]) {
   const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
@@ -80,7 +91,8 @@ for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.htm
       fail(file + ' 第 ' + index + ' 段内联脚本语法错误：' + err.message);
     }
   }
-  notes.push(file + '：' + index + ' 段内联脚本');
+  if (index > 0) fail(file + ' 仍包含 ' + index + ' 段可执行内联脚本，会与 CSP script-src 冲突');
+  notes.push(file + '：' + index + ' 段可执行内联脚本');
 }
 
 /* 4. 页面静态引用的本地资源是否存在 */

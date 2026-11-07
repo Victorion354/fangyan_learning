@@ -164,7 +164,12 @@ test('静态页面与共享数据可正常访问', async () => {
 
   const detail = await rawRequest('/fangyan-detail.html?d=guangzhou');
   assert.equal(detail.status, 200);
-  assert.match(detail.body, /FANGYAN_DATA/);
+  assert.match(detail.body, /src="assets\/detail\.js/);
+
+  const detailScript = await rawRequest('/assets/detail.js');
+  assert.equal(detailScript.status, 200);
+  assert.match(detailScript.headers['content-type'], /javascript/);
+  assert.match(detailScript.body, /FANGYAN_DATA/);
 
   const shared = await rawRequest('/assets/data/dialects.js');
   assert.equal(shared.status, 200);
@@ -214,6 +219,8 @@ test('CSP 限制资源来源并保留地图与 CDN 白名单', async () => {
   assert.match(csp, /form-action 'self'/);
   assert.match(csp, /script-src[^;]*https:\/\/cdn\.jsdelivr\.net/);
   assert.match(csp, /script-src[^;]*https:\/\/unpkg\.com/);
+  assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/, "script-src 不应再允许内联脚本");
+  assert.match(csp, /script-src-attr 'none'/, "内联事件处理器应被禁止");
   assert.match(csp, /img-src[^;]*https:\/\/\*\.tianditu\.gov\.cn/);
   assert.match(csp, /media-src[^;]*data: blob:/);
   assert.equal(res.headers['strict-transport-security'], undefined, 'HTTP 下不应发送 HSTS');
