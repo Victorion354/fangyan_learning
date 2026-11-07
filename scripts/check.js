@@ -95,6 +95,20 @@ for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.htm
   notes.push(file + '：' + index + ' 段可执行内联脚本');
 }
 
+/* 3.1 样式外置与 CSP style-src 兼容 */
+if (!main.includes('href="assets/main.css')) fail('主页没有加载 assets/main.css');
+if (!detail.includes('href="assets/detail.css')) fail('详情页没有加载 assets/detail.css');
+for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.html', detail]]) {
+  if (/<style[\s>]/i.test(html)) fail(file + ' 仍包含内联 <style>，会与 CSP style-src 冲突');
+}
+for (const file of ['assets/main.css', 'assets/detail.css']) {
+  const css = read(file);
+  const open = (css.match(/{/g) || []).length;
+  const close = (css.match(/}/g) || []).length;
+  if (open !== close) fail(file + ' 花括号不配对：' + open + ' / ' + close);
+}
+notes.push('页面样式：2 个外置 CSS，无内联 <style>');
+
 /* 4. 页面静态引用的本地资源是否存在 */
 for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.html', detail]]) {
   const re = /(?:src|href)="(assets\/[^"?#]+)(?:[?#][^"]*)?"/g;

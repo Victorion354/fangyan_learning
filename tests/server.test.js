@@ -221,6 +221,8 @@ test('CSP 限制资源来源并保留地图与 CDN 白名单', async () => {
   assert.match(csp, /script-src[^;]*https:\/\/unpkg\.com/);
   assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/, "script-src 不应再允许内联脚本");
   assert.match(csp, /script-src-attr 'none'/, "内联事件处理器应被禁止");
+  assert.doesNotMatch(csp, /style-src\s[^;]*'unsafe-inline'/, "style-src 不应再允许内联样式块");
+  assert.match(csp, /style-src-attr 'unsafe-inline'/, "样式属性仍需保留内联白名单");
   assert.match(csp, /img-src[^;]*https:\/\/\*\.tianditu\.gov\.cn/);
   assert.match(csp, /media-src[^;]*data: blob:/);
   assert.equal(res.headers['strict-transport-security'], undefined, 'HTTP 下不应发送 HSTS');

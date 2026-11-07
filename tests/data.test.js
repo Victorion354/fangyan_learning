@@ -114,6 +114,24 @@ test('页面不再包含可执行内联脚本', () => {
   }
 });
 
+test('页面样式已外置且不再包含内联 style 块', () => {
+  for (const [htmlFile, cssFile] of [
+    ['方言学习页.html', 'assets/main.css'],
+    ['fangyan-detail.html', 'assets/detail.css']
+  ]) {
+    const html = read(htmlFile);
+    assert.match(html, new RegExp('href="' + cssFile.replace('.', '\\.') + '[^"]*"'), htmlFile + ' 没有加载外置样式');
+    assert.doesNotMatch(html, /<style[\s>]/i, htmlFile + ' 仍包含内联 <style>');
+    const css = read(cssFile);
+    assert.ok(css.length > 1000, cssFile + ' 内容过短');
+    assert.equal(
+      (css.match(/{/g) || []).length,
+      (css.match(/}/g) || []).length,
+      cssFile + ' 花括号不配对'
+    );
+  }
+});
+
 test('页面中的详情字段使用合并后的命名', () => {
   const detailJs = read('assets/detail.js');
   assert.doesNotMatch(detailJs, /\bd\.full\b/);

@@ -61,6 +61,10 @@ assets/
   data/
     dialects.js         方言共享数据：主页、详情页、社区与服务端共用（唯一数据源）
   config.js             天地图 Key 与接口地址配置
+  main.css              主页面样式
+  main.js               主页面渲染、互动与结构化数据逻辑
+  detail.css            详情页样式
+  detail.js             详情页地图、音频、人口与结构化数据逻辑
   community.css         主页面乡音社区样式
   community.js          主页面乡音社区逻辑（本地 / 服务端实时）
   mapdata.js            离线省界 SVG 路径 + 投影参数（由 _genmap.py 生成）
@@ -119,8 +123,10 @@ COMMUNITY_ADMIN_TOKEN=随机长字符串
 ```text
 default-src 'self'; base-uri 'self'; object-src 'none';
 frame-ancestors 'self'; form-action 'self';
-script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com;
-style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com;
+script-src 'self' https://cdn.jsdelivr.net https://unpkg.com;
+script-src-attr 'none';
+style-src 'self' https://cdn.jsdelivr.net https://unpkg.com;
+style-src-attr 'unsafe-inline';
 img-src 'self' data: blob: https://*.tianditu.gov.cn https://cdn.jsdelivr.net https://unpkg.com;
 font-src 'self' data:;
 media-src 'self' data: blob:;
@@ -128,7 +134,7 @@ connect-src 'self' https://*.tianditu.gov.cn;
 worker-src 'self' blob:; manifest-src 'self'
 ```
 
-CSP 目前允许内联脚本和样式，因为两个页面都使用内联 `<script>` / `<style>` 和大量 `style` 属性；但外部脚本、样式、图片和媒体来源已经收窄到本站、Leaflet CDN 与天地图。等内联代码拆成静态文件或加上 nonce/hash 后，可以进一步去掉 `'unsafe-inline'`。
+页面脚本和样式都已拆到 `assets/*.js` / `assets/*.css`，因此 `script-src` 与 `style-src` 不再需要 `'unsafe-inline'`。仍保留 `style-src-attr 'unsafe-inline'`，因为页面和脚本会生成 `style="--c:…"` 这类内联样式属性；`script-src-attr 'none'` 则禁止内联事件处理器。外部脚本、样式、图片和媒体来源已经收窄到本站、Leaflet CDN 与天地图。
 
 HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-Opener-Policy: same-origin`；HTTP 本地调试不发送这两个头，避免浏览器忽略或误伤。
 
