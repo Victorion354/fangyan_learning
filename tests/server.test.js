@@ -213,6 +213,37 @@ test('静态资源按版本缓存并支持条件请求', async () => {
   assert.match(image.headers['cache-control'], /max-age=604800/);
 });
 
+test('文本资源支持 gzip 压缩并区分 ETag', async () => {
+  const plain = await rawRequest('/assets/main.css?v=20261107', 'GET', {
+    'Accept-Encoding': 'identity'
+  });
+  assert.equal(plain.headers['content-encoding'], undefined);
+  assert.match(plain.headers['vary'], /Accept-Encoding/);
+
+  const gz = await rawRequest('/assets/main.css?v=20261107', 'GET', {
+    'Accept-Encoding': 'gzip'
+  });
+  assert.equal(gz.headers['content-encoding'], 'gzip');
+  assert.match(gz.headers['vary'], /Accept-Encoding/);
+  assert.notEqual(gz.headers.etag, plain.headers.etag);
+  assert.ok(Number(gz.headers['content-length']) < Number(plain.headers['content-length']), 'gzip 应更小');
+
+  const cached = await rawRequest('/assets/main.css?v=20261107', 'GET', {
+    'Accept-Encoding': 'gzip',
+    'If-None-Match': gz.headers.etag
+  });
+  assert.equal(cached.status, 304);
+
+  const rejected = await rawRequest('/assets/main.css?v=20261107', 'GET', {
+    'Accept-Encoding': 'gzip;q=0'
+  });
+  assert.equal(rejected.headers['content-encoding'], undefined);
+
+  const res = await fetch(base + '/assets/main.css?v=20261107');
+  assert.equal(res.headers.get('content-encoding'), 'gzip');
+  assert.match(await res.text(), /--paper/);
+});
+
 test('敏感文件与路径绕过均返回 404', async () => {
   const blocked = [
     '/server.js',

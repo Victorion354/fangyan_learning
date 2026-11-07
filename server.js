@@ -20,6 +20,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const FANGYAN_DATA = require('./assets/data/dialects.js');
 
 const ROOT = __dirname;
@@ -55,6 +56,29 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
   '.md': 'text/markdown; charset=utf-8'
 };
+
+const COMPRESSIBLE = /^(?:text\/|application\/(?:javascript|json|xml)|image\/svg\+xml)/i;
+const GZIP_CACHE = new Map();
+const GZIP_CACHE_LIMIT = 64;
+
+function acceptsGzip(header) {
+  if (!header) return false;
+  return header.split(',').some((part) => {
+    const [name, ...params] = part.trim().toLowerCase().split(';');
+    if (name !== 'gzip' && name !== '*') return false;
+    const q = params.map((p) => p.trim()).find((p) => p.startsWith('q='));
+    return !q || Number(q.slice(2)) > 0;
+  });
+}
+
+function gzipBuffer(key, buffer) {
+  const cached = GZIP_CACHE.get(key);
+  if (cached) return cached;
+  const out = zlib.gzipSync(buffer, { level: 6 });
+  if (GZIP_CACHE.size >= GZIP_CACHE_LIMIT) GZIP_CACHE.delete(GZIP_CACHE.keys().next().value);
+  GZIP_CACHE.set(key, out);
+  return out;
+}
 
 let posts = loadCommunity();
 const sseClients = new Set();
@@ -513,7 +537,9 @@ function serveStatic(req, res, url) {
         : ext === '.json'
           ? 'no-cache'
           : 'public, max-age=604800';
-    const etag = '"' + stat.size.toString(16) + '-' + Math.floor(stat.mtimeMs).toString(16) + '"';
+    const compressible = COMPRESSIBLE.test(type);
+    const useGzip = !req.headers.range && stat.size >= 1024 && compressible && acceptsGzip(req.headers['accept-encoding']);
+    const etag = '"' + stat.size.toString(16) + '-' + Math.floor(stat.mtimeMs).toString(16) + (useGzip ? '-gzip' : '') + '"';
     const headers = {
       'Content-Type': type,
       'Cache-Control': cacheControl,
@@ -521,6 +547,7 @@ function serveStatic(req, res, url) {
       'Last-Modified': stat.mtime.toUTCString(),
       'Accept-Ranges': 'bytes'
     };
+    if (compressible) headers['Vary'] = 'Accept-Encoding';
 
     const ifNoneMatch = req.headers['if-none-match'];
     const ifModifiedSince = req.headers['if-modified-since'];
@@ -533,6 +560,7 @@ function serveStatic(req, res, url) {
     }
     if (notModified) {
       delete headers['Content-Type'];
+      if (useGzip) headers['Content-Encoding'] = 'gzip';
       res.writeHead(304, headers);
       res.end();
       return;
@@ -554,6 +582,23 @@ function serveStatic(req, res, url) {
       res.writeHead(206, headers);
       if (req.method === 'HEAD') { res.end(); return; }
       fs.createReadStream(file, { start: start, end: safeEnd }).pipe(res);
+      return;
+    }
+
+    if (useGzip) {
+      fs.readFile(file, (readErr, buffer) => {
+        if (readErr) {
+          res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Internal Server Error');
+          return;
+        }
+        const compressed = gzipBuffer(file + ':' + stat.mtimeMs + ':' + stat.size, buffer);
+        headers['Content-Encoding'] = 'gzip';
+        headers['Content-Length'] = compressed.length;
+        res.writeHead(200, headers);
+        if (req.method === 'HEAD') { res.end(); return; }
+        res.end(compressed);
+      });
       return;
     }
 

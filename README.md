@@ -146,6 +146,7 @@ HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-
 - 主页十张方言卡片使用 `<picture>` + `srcset`（800w / 1600w）和 `sizes`，高 DPI 屏幕按需选择大图；详情页头图同样使用 800w / 1600w，并补充了宽高以避免布局跳动。
 - 详情页对 Leaflet CDN（jsDelivr，备用 unpkg）和天地图瓦片域名做 `preconnect` / `dns-prefetch`，减少地图首次加载的握手等待。
 - 静态资源返回 `ETag` 与 `Last-Modified`，支持 `304` 条件请求；带 `?v=` 版本号的 JS/CSS 使用一年期 `immutable` 缓存，图片/字体/音频缓存 7 天，HTML 与 JSON 保持 `no-cache` 以便及时更新。
+- 文本类静态资源（HTML/CSS/JS/JSON/SVG）在浏览器支持时使用 gzip 压缩，并按编码区分 `ETag`；压缩结果带内存缓存，避免重复压缩。
 - 主页与详情页补充了 `og:image:alt`、`og:locale`、Twitter Card；详情页会按当前方言更新分享标题、描述和图片。
 - 结构化数据由共享方言数据动态生成：主页输出 `ItemList`，详情页输出 `WebPage`，不额外维护一份方言清单。
 - 本地 Lighthouse 的 SEO、无障碍与最佳实践三项，在主页和详情页均为 100 分；性能项没有作为自动化门槛，因为天地图与 Leaflet CDN 的加载速度受网络环境影响。
