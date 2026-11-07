@@ -1,0 +1,5 @@
+html,body{height:100%;margin:0}
+body{display:grid;place-items:center;background:#f7f2e7;color:#2b2c35;
+     font-family:"Songti SC","Noto Serif SC","SimSun",serif;text-align:center}
+a{color:#b23a30}
+p{font-size:15px;line-height:1.8}

@@ -167,6 +167,10 @@ test('静态页面与共享数据可正常访问', async () => {
   assert.equal(home.status, 200);
   assert.match(home.headers['content-type'], /text\/html/);
   assert.match(home.body, /一声一味/);
+  assert.match(home.body, /src="assets\/index\.js\?v=/);
+  assert.match(home.body, /href="assets\/index\.css\?v=/);
+  assert.doesNotMatch(home.body, /<script(?![^>]*\bsrc=)[^>]*>/i, '入口页不应包含内联脚本');
+  assert.doesNotMatch(home.body, /<style[\s>]/i, '入口页不应包含内联样式');
 
   const detail = await rawRequest('/fangyan-detail.html?d=guangzhou');
   assert.equal(detail.status, 200);

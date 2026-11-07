@@ -61,6 +61,8 @@ assets/
   data/
     dialects.js         方言共享数据：主页、详情页、社区与服务端共用（唯一数据源）
   config.js             天地图 Key 与接口地址配置
+  index.css             入口跳转页样式
+  index.js              入口跳转逻辑
   main.css              主页面样式
   main.js               主页面渲染、互动与结构化数据逻辑
   detail.css            详情页样式
@@ -92,6 +94,7 @@ tests/                  node:test 自动化测试（共享数据 + 服务端接�
 
 ```bash
 npm start        # 等同于 node server.js
+npm run build    # 按内容哈希刷新页面里的 assets/*.js|css 版本号
 npm run check    # 检查共享数据、页面引用、外置脚本/样式、本地资源
 npm test         # 运行共享数据与服务端接口测试
 ```
@@ -102,7 +105,10 @@ npm test         # 运行共享数据与服务端接口测试
 - 主页、详情页、社区和服务端是否仍然读取同一份共享数据；
 - 页面引用的外置脚本与 `server.js`、`assets/community.js`、`assets/data/dialects.js` 的语法，以及外置 CSS 的花括号配对；
 - 页面是否仍残留可执行内联脚本或内联 `<style>`，避免与严格 CSP 冲突；
+- 带 `?v=` 的本地 JS/CSS 版本号是否与文件内容哈希一致；
 - 页面里引用的本地 `assets/*` 文件是否真实存在。
+
+修改 `assets/*.js` 或 `assets/*.css` 后，先运行 `npm run build` 更新版本号，再运行 `npm run check`。版本号用于配合一年期 `immutable` 缓存，避免浏览器继续使用旧资源。
 
 `npm test` 使用 Node 内置的 `node:test`，不会修改正式的 `data/community.json`。服务端测试会自动选择一个空闲端口，并把社区数据写到系统临时目录。服务端支持以下环境变量，便于测试或单独部署时隔离数据：
 
@@ -145,7 +151,7 @@ HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-
 
 - 主页十张方言卡片使用 `<picture>` + `srcset`（800w / 1600w）和 `sizes`，高 DPI 屏幕按需选择大图；详情页头图同样使用 800w / 1600w，并补充了宽高以避免布局跳动。
 - 详情页对 Leaflet CDN（jsDelivr，备用 unpkg）和天地图瓦片域名做 `preconnect` / `dns-prefetch`，减少地图首次加载的握手等待。
-- 静态资源返回 `ETag` 与 `Last-Modified`，支持 `304` 条件请求；带 `?v=` 版本号的 JS/CSS 使用一年期 `immutable` 缓存，图片/字体/音频缓存 7 天，HTML 与 JSON 保持 `no-cache` 以便及时更新。
+- 静态资源返回 `ETag` 与 `Last-Modified`，支持 `304` 条件请求；带 `?v=` 内容哈希版本号的 JS/CSS 使用一年期 `immutable` 缓存，图片/字体/音频缓存 7 天，HTML 与 JSON 保持 `no-cache` 以便及时更新。版本号由 `npm run build` 生成，`npm run check` 会阻止过期版本号。
 - 文本类静态资源（HTML/CSS/JS/JSON/SVG）在浏览器支持时使用 gzip 压缩，并按编码区分 `ETag`；压缩结果带内存缓存，避免重复压缩。
 - 主页与详情页补充了 `og:image:alt`、`og:locale`、Twitter Card；详情页会按当前方言更新分享标题、描述和图片。
 - 结构化数据由共享方言数据动态生成：主页输出 `ItemList`，详情页输出 `WebPage`，不额外维护一份方言清单。

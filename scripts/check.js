@@ -4,6 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
@@ -45,6 +46,7 @@ for (const d of data.dialects) {
 notes.push('共享方言数据：' + data.dialects.length + ' 个方言');
 
 /* 2. 页面是否使用共享数据 */
+const index = read('index.html');
 const main = read('方言学习页.html');
 const detail = read('fangyan-detail.html');
 const mainJs = read('assets/main.js');
@@ -66,7 +68,7 @@ if (!server.includes("require('./assets/data/dialects.js')")) fail('服务端没
 
 /* 3. 脚本语法 */
 const scriptFiles = new Set(['server.js']);
-for (const html of [main, detail]) {
+for (const html of [index, main, detail]) {
   const re = /<script[^>]+src="(assets\/[^"?#]+\.js)(?:[?#][^"]*)?"/g;
   let match;
   while ((match = re.exec(html))) scriptFiles.add(match[1]);
@@ -77,7 +79,7 @@ for (const file of scriptFiles) {
 }
 notes.push('脚本语法：' + scriptFiles.size + ' 个文件');
 
-for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.html', detail]]) {
+for (const [file, html] of [['index.html', index], ['方言学习页.html', main], ['fangyan-detail.html', detail]]) {
   const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
   let match;
   let index = 0;
@@ -96,21 +98,41 @@ for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.htm
 }
 
 /* 3.1 样式外置与 CSP style-src 兼容 */
+if (!index.includes('href="assets/index.css')) fail('入口页没有加载 assets/index.css');
 if (!main.includes('href="assets/main.css')) fail('主页没有加载 assets/main.css');
 if (!detail.includes('href="assets/detail.css')) fail('详情页没有加载 assets/detail.css');
-for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.html', detail]]) {
+for (const [file, html] of [['index.html', index], ['方言学习页.html', main], ['fangyan-detail.html', detail]]) {
   if (/<style[\s>]/i.test(html)) fail(file + ' 仍包含内联 <style>，会与 CSP style-src 冲突');
 }
-for (const file of ['assets/main.css', 'assets/detail.css']) {
+for (const file of ['assets/index.css', 'assets/main.css', 'assets/detail.css']) {
   const css = read(file);
   const open = (css.match(/{/g) || []).length;
   const close = (css.match(/}/g) || []).length;
   if (open !== close) fail(file + ' 花括号不配对：' + open + ' / ' + close);
 }
-notes.push('页面样式：2 个外置 CSS，无内联 <style>');
+notes.push('页面样式：3 个外置 CSS，无内联 <style>');
+
+/* 3.2 版本号必须与文件内容哈希一致，避免 immutable 缓存拿到旧资源 */
+for (const [file, html] of [['index.html', index], ['方言学习页.html', main], ['fangyan-detail.html', detail]]) {
+  const re = /(?:src|href)="(assets\/[^"?#]+\.(?:js|css))(?:\?v=([^"#]*))?"/g;
+  let match;
+  while ((match = re.exec(html))) {
+    const asset = match[1];
+    const actual = match[2];
+    const full = path.join(root, decodeURIComponent(asset));
+    if (!fs.existsSync(full)) continue;
+    const expected = crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex').slice(0, 10);
+    if (!actual) {
+      fail(file + ' 的资源缺少版本号：' + asset + '（运行 npm run build）');
+    } else if (actual !== expected) {
+      fail(file + ' 的资源版本号已过期：' + asset + '（运行 npm run build）');
+    }
+  }
+}
+notes.push('资源版本：JS/CSS 版本号与内容哈希一致');
 
 /* 4. 页面静态引用的本地资源是否存在 */
-for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.html', detail]]) {
+for (const [file, html] of [['index.html', index], ['方言学习页.html', main], ['fangyan-detail.html', detail]]) {
   const re = /(?:src|href)="(assets\/[^"?#]+)(?:[?#][^"]*)?"/g;
   let match;
   while ((match = re.exec(html))) {

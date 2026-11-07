@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const root = path.resolve(__dirname, '..');
 const data = require(path.join(root, 'assets/data/dialects.js'));
@@ -108,7 +109,7 @@ test('主页、详情页、社区与服务端都读取共享数据', () => {
 });
 
 test('页面不再包含可执行内联脚本', () => {
-  for (const file of ['方言学习页.html', 'fangyan-detail.html']) {
+  for (const file of ['index.html', '方言学习页.html', 'fangyan-detail.html']) {
     const html = read(file);
     assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i, file + ' 仍包含内联脚本');
   }
@@ -116,6 +117,7 @@ test('页面不再包含可执行内联脚本', () => {
 
 test('页面样式已外置且不再包含内联 style 块', () => {
   for (const [htmlFile, cssFile] of [
+    ['index.html', 'assets/index.css'],
     ['方言学习页.html', 'assets/main.css'],
     ['fangyan-detail.html', 'assets/detail.css']
   ]) {
@@ -123,13 +125,32 @@ test('页面样式已外置且不再包含内联 style 块', () => {
     assert.match(html, new RegExp('href="' + cssFile.replace('.', '\\.') + '[^"]*"'), htmlFile + ' 没有加载外置样式');
     assert.doesNotMatch(html, /<style[\s>]/i, htmlFile + ' 仍包含内联 <style>');
     const css = read(cssFile);
-    assert.ok(css.length > 1000, cssFile + ' 内容过短');
+    assert.ok(css.length > 100, cssFile + ' 内容过短');
     assert.equal(
       (css.match(/{/g) || []).length,
       (css.match(/}/g) || []).length,
       cssFile + ' 花括号不配对'
     );
   }
+});
+
+test('本地 JS/CSS 的版本号与内容哈希一致', () => {
+  const pages = ['index.html', '方言学习页.html', 'fangyan-detail.html'];
+  let checked = 0;
+  for (const page of pages) {
+    const html = read(page);
+    const re = /(?:src|href)="(assets\/[^"?#]+\.(?:js|css))(?:\?v=([^"#]*))?"/g;
+    let match;
+    while ((match = re.exec(html))) {
+      const asset = match[1];
+      const version = match[2];
+      const expected = crypto.createHash('sha256').update(read(asset)).digest('hex').slice(0, 10);
+      assert.ok(version, page + ' 的 ' + asset + ' 缺少版本号，请运行 npm run build');
+      assert.equal(version, expected, page + ' 的 ' + asset + ' 版本号已过期，请运行 npm run build');
+      checked += 1;
+    }
+  }
+  assert.ok(checked >= 13, '应检查至少 13 个带版本号的本地资源');
 });
 
 test('页面中的详情字段使用合并后的命名', () => {
