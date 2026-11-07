@@ -259,11 +259,32 @@ function sendJson(res, status, value) {
   res.end(body);
 }
 
-function setSecurityHeaders(res) {
+function setSecurityHeaders(req, res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
+  const proto = String(req.headers['x-forwarded-proto'] || '').toLowerCase();
+  const isHttps = (req.socket && req.socket.encrypted) || proto === 'https';
+  if (isHttps) {
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'self'",
+    "form-action 'self'",
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com",
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com",
+    "img-src 'self' data: blob: https://*.tianditu.gov.cn https://cdn.jsdelivr.net https://unpkg.com",
+    "font-src 'self' data:",
+    "media-src 'self' data: blob:",
+    "connect-src 'self' https://*.tianditu.gov.cn",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'"
+  ].join('; '));
 }
 
 function setCors(res) {
@@ -277,13 +298,22 @@ function rateLimit(req, bucket, max, windowMs) {
   const ip = (req.socket && req.socket.remoteAddress) || 'unknown';
   const key = bucket + ':' + ip;
   const now = Date.now();
+  if (rateBuckets.size > 2000) {
+    for (const [oldKey, oldEntry] of rateBuckets) {
+      if (now - oldEntry.start > 10 * 60 * 1000) rateBuckets.delete(oldKey);
+    }
+  }
   let entry = rateBuckets.get(key);
   if (!entry || now - entry.start > windowMs) {
     entry = { start: now, count: 0 };
     rateBuckets.set(key, entry);
   }
   entry.count += 1;
-  if (entry.count > max) throw httpError(429, '操作太频繁，请稍后再试');
+  if (entry.count > max) {
+    const err = httpError(429, '操作太频繁，请稍后再试');
+    err.retryAfter = Math.max(1, Math.ceil((entry.start + windowMs - now) / 1000));
+    throw err;
+  }
 }
 
 function sseSend(res, event, data) {
@@ -509,7 +539,7 @@ function serveStatic(req, res, url) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost'));
-  setSecurityHeaders(res);
+  setSecurityHeaders(req, res);
   setCors(res);
   if (url.pathname.startsWith('/api/')) {
     handleApi(req, res, url).catch((err) => {
@@ -519,6 +549,7 @@ const server = http.createServer((req, res) => {
       }
       const status = err.status || 500;
       if (status >= 500) console.error(err);
+      if (err.retryAfter) res.setHeader('Retry-After', String(err.retryAfter));
       sendJson(res, status, { error: err.message || '服务器错误' });
     });
     return;

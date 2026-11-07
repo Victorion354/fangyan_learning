@@ -205,6 +205,21 @@ test('所有响应带有基础安全响应头', async () => {
   }
 });
 
+test('CSP 限制资源来源并保留地图与 CDN 白名单', async () => {
+  const res = await rawRequest('/');
+  const csp = res.headers['content-security-policy'] || '';
+  assert.match(csp, /default-src 'self'/);
+  assert.match(csp, /object-src 'none'/);
+  assert.match(csp, /frame-ancestors 'self'/);
+  assert.match(csp, /form-action 'self'/);
+  assert.match(csp, /script-src[^;]*https:\/\/cdn\.jsdelivr\.net/);
+  assert.match(csp, /script-src[^;]*https:\/\/unpkg\.com/);
+  assert.match(csp, /img-src[^;]*https:\/\/\*\.tianditu\.gov\.cn/);
+  assert.match(csp, /media-src[^;]*data: blob:/);
+  assert.equal(res.headers['strict-transport-security'], undefined, 'HTTP 下不应发送 HSTS');
+  assert.equal(res.headers['cross-origin-opener-policy'], undefined, 'HTTP 下不发送会被忽略的 COOP');
+});
+
 test('CORS 预检允许删除令牌请求头', async () => {
   const { status, headers } = await jsonFetch('/api/community', {
     method: 'OPTIONS',
@@ -394,6 +409,31 @@ test('未知接口返回 404 JSON', async () => {
   const { status, data } = await jsonFetch('/api/not-found');
   assert.equal(status, 404);
   assert.match(data.error, /接口不存在/);
+});
+
+test('发布接口触发限流并返回 Retry-After', async () => {
+  const created = [];
+  let limited = null;
+  for (let i = 0; i < 30; i += 1) {
+    const res = await createPost('client-rate-hhhhhh', { text: '限流测试 ' + i });
+    if (res.status === 429) {
+      limited = res;
+      break;
+    }
+    assert.equal(res.status, 201);
+    created.push(res.data.post.id);
+  }
+  assert.ok(limited, '连续发布应触发 429');
+  assert.match(limited.data.error, /太频繁/);
+  assert.ok(Number(limited.headers.get('retry-after')) > 0, '应返回 Retry-After');
+
+  for (const id of created) {
+    const removed = await jsonFetch('/api/community/' + id, {
+      method: 'DELETE',
+      headers: { 'X-Admin-Token': ADMIN_TOKEN }
+    });
+    assert.equal(removed.status, 200);
+  }
 });
 
 test('测试结束后社区文件为空数组', () => {

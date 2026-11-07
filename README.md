@@ -110,9 +110,29 @@ POPULATION_FILE=./data/population.json
 COMMUNITY_ADMIN_TOKEN=随机长字符串
 ```
 
-测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CORS 预检、发布/删除令牌、管理员删除、点赞去重、非法输入和人口接口。
+测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 预检、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入和人口接口。
 
-`server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。目前还没有启用 CSP，因为页面包含内联脚本、样式以及 Leaflet CDN / 天地图瓦片，需要逐项验证后再加。
+`server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。
+
+同时启用了内容安全策略（CSP）：
+
+```text
+default-src 'self'; base-uri 'self'; object-src 'none';
+frame-ancestors 'self'; form-action 'self';
+script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com;
+style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com;
+img-src 'self' data: blob: https://*.tianditu.gov.cn https://cdn.jsdelivr.net https://unpkg.com;
+font-src 'self' data:;
+media-src 'self' data: blob:;
+connect-src 'self' https://*.tianditu.gov.cn;
+worker-src 'self' blob:; manifest-src 'self'
+```
+
+CSP 目前允许内联脚本和样式，因为两个页面都使用内联 `<script>` / `<style>` 和大量 `style` 属性；但外部脚本、样式、图片和媒体来源已经收窄到本站、Leaflet CDN 与天地图。等内联代码拆成静态文件或加上 nonce/hash 后，可以进一步去掉 `'unsafe-inline'`。
+
+HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-Opener-Policy: same-origin`；HTTP 本地调试不发送这两个头，避免浏览器忽略或误伤。
+
+发布、点赞和删除接口使用进程内限流（发布 20 次/分钟、点赞 120 次/分钟、删除 30 次/分钟），超限返回 `429` 并带 `Retry-After`。限流表会定期清理过期记录，但重启服务后会清零，仍不是分布式生产级限流。
 
 ## 性能与 SEO
 
@@ -195,7 +215,7 @@ COMMUNITY_ADMIN_TOKEN=随机长字符串
 - **部分方言暂无授权录音**：官话、客家话、湘语、赣语、晋语、徽语、平话没有找到许可清晰的真人录音，页面如实留空。
 - **天地图需要自行申请 Key**：仓库不包含任何 Key；未配置时只能使用离线示意。在线底图需遵守天地图服务条款，公开发布前请确认 Key 的配额与使用范围。
 - **人口不是实时人口**：现有公开统计最晚只到 2012 年出版、2004 年人口口径，没有权威的 2026 年实时数据。
-- **社区服务仅适合本机演示**：没有账号、内容审核和隐私合规能力；删除已改为“发布令牌 + 可选管理员令牌”，但 SSE 与 REST 仍未做生产级限流以外的防护。
+- **社区服务仅适合本机演示**：没有账号、内容审核和隐私合规能力；删除已改为“发布令牌 + 可选管理员令牌”，发布/点赞/删除有进程内限流，但重启即清零，仍不是生产级防护。
 - **源码屏蔽只覆盖自带 Node 服务**：`server.js` 会拒绝访问 `server.js`、`README.md`、`*.py`、`data/`、`_backup/`、`_shots/` 等敏感路径；如果改用 `python -m http.server` 或普通静态托管，这些文件仍可能被直接下载，请不要把项目根目录原样公开到公网。
 - **共享数据已收拢**：方言名称、颜色、省份、历史、风俗和地图范围统一在 `assets/data/dialects.js`，主页、详情页、社区和服务端都从这一份数据读取；修改方言信息时只需要改这个文件。
 - **注音与用词需要母语者审校**：页面混用粤拼、白话字/台罗及近音标注，部分方言词使用民间借字或近音字写法。
