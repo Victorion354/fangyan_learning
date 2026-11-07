@@ -10,6 +10,18 @@
 <meta property="og:title" content="方言详情 · 一声一味">
 <meta property="og:description" content="一声一味 · 中国十大方言图鉴：方言历史、人言乡音、实时分布地图与使用人口。">
 <meta property="og:image" content="assets/beijing.jpg">
+<meta property="og:image:alt" content="方言地域印象">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="方言详情 · 一声一味">
+<meta name="twitter:description" content="一声一味 · 中国十大方言图鉴：方言历史、人言乡音、分布地图与使用人口。">
+<meta name="twitter:image" content="assets/beijing.jpg">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="dns-prefetch" href="https://unpkg.com">
+<link rel="preconnect" href="https://t0.tianditu.gov.cn">
+<link rel="dns-prefetch" href="https://t1.tianditu.gov.cn">
+<link rel="dns-prefetch" href="https://t2.tianditu.gov.cn">
+<link rel="dns-prefetch" href="https://t3.tianditu.gov.cn">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23B23A30'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' fill='%23f7f0e6' font-family='serif'%3E%E8%A8%80%3C/text%3E%3C/svg%3E">
 <style>
 :root{
@@ -186,7 +198,7 @@ a:focus-visible{outline:2px solid var(--bamboo);outline-offset:3px}
 .audio-card{background:#fff7;border:1px solid var(--line);border-radius:4px 18px 4px 18px;padding:24px}
 .audio-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
 .audio-item{background:#f8f1e4;border:1px solid var(--line);border-radius:4px 14px 4px 14px;padding:16px 18px}
-.audio-item h4{font-size:17px;line-height:1.5;margin-bottom:3px}
+.audio-item h3{font-size:17px;line-height:1.5;margin-bottom:3px}
 .audio-item .tr{font-size:13px;color:var(--ink2);margin-bottom:2px}
 .audio-item .roman{font-family:var(--kai);font-size:12.5px;color:var(--ink2);letter-spacing:.4px;margin-bottom:8px;overflow-wrap:anywhere}
 .audio-item audio{width:100%;height:38px;margin:8px 0 10px}
@@ -250,7 +262,7 @@ a:focus-visible{outline:2px solid var(--bamboo);outline-offset:3px}
   <div class="bg">
     <picture id="hero-pic">
       <source id="hero-webp" type="image/webp" sizes="100vw">
-      <img id="hero-img" class="hbg" alt="" decoding="async" fetchpriority="high">
+      <img id="hero-img" class="hbg" alt="" width="1600" height="1067" decoding="async" fetchpriority="high">
     </picture>
     <div class="shade"></div>
   </div>
@@ -259,7 +271,7 @@ a:focus-visible{outline:2px solid var(--bamboo);outline-offset:3px}
     <h1 id="hero-title"></h1>
     <p class="sub" id="hero-sub"></p>
     <span class="tagline" id="hero-tag"></span>
-    <br><button class="hear-btn" id="hear-btn" type="button" aria-label="试听示例（普通话合成音，非方言真实发音）"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><span id="hear-label">试听合成音</span></button>
+    <br><button class="hear-btn" id="hear-btn" type="button"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><span id="hear-label">试听合成音</span><span class="sr-only">（普通话合成音，非方言真实发音）</span></button>
   </div>
 </header>
 
@@ -649,7 +661,9 @@ function renderLiveMap(d,retried){
     c=[c[0]/g.points.length,c[1]/g.points.length];
     var marker=L.marker([c[1],c[0]],{
       icon:L.divIcon({className:'geo-pulse',html:'<span></span>',iconSize:[14,14],iconAnchor:[7,7]}),
-      interactive:false
+      interactive:false,
+      keyboard:false,
+      title:g.name+'核心区'
     }).addTo(liveMap);
     liveGeoLayer.push(marker);
   });
@@ -909,7 +923,7 @@ function renderAudio(d){
     var lic=a.licenseUrl?'<a href="'+esc(a.licenseUrl)+'" target="_blank" rel="noopener">'+esc(a.license||'许可')+'</a>':esc(a.license||'');
     var src=a.sourceUrl?'<a href="'+esc(a.sourceUrl)+'" target="_blank" rel="noopener">'+esc(a.source||'来源')+'</a>':esc(a.source||'');
     return '<article class="audio-item">'+
-      '<h4>'+esc(a.title||'方言录音')+'</h4>'+
+      '<h3>'+esc(a.title||'方言录音')+'</h3>'+
       (a.translation?'<p class="tr">'+esc(a.translation)+'</p>':'')+
       (a.roman?'<p class="roman">'+esc(a.roman)+'</p>':'')+
       '<audio controls preload="none" src="'+esc(a.src)+'"></audio>'+
@@ -918,6 +932,35 @@ function renderAudio(d){
     '</article>';
   }).join('');
   $('#audio-note').innerHTML='说明：以上均为可再分发的真人录音，逐条标注作者、许可与来源。播放器音质与口音因录音来源而异；上方“试听合成音”按钮为浏览器普通话合成音，并非方言真实读音。';
+}
+
+function renderSeo(d){
+  var setMeta=function(selector,value){
+    var el=document.querySelector(selector);
+    if(el)el.setAttribute('content',value);
+  };
+  setMeta('meta[property="og:image:alt"]',d.name+' · '+d.area);
+  setMeta('meta[name="twitter:title"]',d.title+' · 一声一味');
+  setMeta('meta[name="twitter:description"]',d.sub);
+  setMeta('meta[name="twitter:image"]','assets/'+d.id+'.jpg');
+
+  var ld={
+    '@context':'https://schema.org',
+    '@type':'WebPage',
+    name:d.title+' · 一声一味',
+    description:d.sub,
+    inLanguage:'zh-CN',
+    about:{'@type':'Thing',name:d.name,alternateName:d.fullName},
+    isPartOf:{'@type':'WebSite',name:'一声一味 · 中国十大方言',inLanguage:'zh-CN'}
+  };
+  var el=document.getElementById('page-jsonld');
+  if(!el){
+    el=document.createElement('script');
+    el.type='application/ld+json';
+    el.id='page-jsonld';
+    document.head.appendChild(el);
+  }
+  el.textContent=JSON.stringify(ld);
 }
 
 function render(d){
@@ -930,6 +973,7 @@ function render(d){
   if(ogDesc)ogDesc.setAttribute('content',d.sub);
   var ogImg=document.querySelector('meta[property="og:image"]');
   if(ogImg)ogImg.setAttribute('content','assets/'+d.id+'.jpg');
+  renderSeo(d);
 
   $('#hero-title').textContent=d.title;
   $('#hero-sub').textContent=d.sub;

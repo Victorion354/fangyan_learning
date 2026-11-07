@@ -114,6 +114,15 @@ COMMUNITY_ADMIN_TOKEN=随机长字符串
 
 `server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。目前还没有启用 CSP，因为页面包含内联脚本、样式以及 Leaflet CDN / 天地图瓦片，需要逐项验证后再加。
 
+## 性能与 SEO
+
+- 主页十张方言卡片使用 `<picture>` + `srcset`（800w / 1600w）和 `sizes`，高 DPI 屏幕按需选择大图；详情页头图同样使用 800w / 1600w，并补充了宽高以避免布局跳动。
+- 详情页对 Leaflet CDN（jsDelivr，备用 unpkg）和天地图瓦片域名做 `preconnect` / `dns-prefetch`，减少地图首次加载的握手等待。
+- 主页与详情页补充了 `og:image:alt`、`og:locale`、Twitter Card；详情页会按当前方言更新分享标题、描述和图片。
+- 结构化数据由共享方言数据动态生成：主页输出 `ItemList`，详情页输出 `WebPage`，不额外维护一份方言清单。
+- 本地 Lighthouse 的 SEO、无障碍与最佳实践三项，在主页和详情页均为 100 分；性能项没有作为自动化门槛，因为天地图与 Leaflet CDN 的加载速度受网络环境影响。
+- `sitemap.xml`、`robots.txt` 和固定 `canonical` 需要等实际部署域名确定后再加，避免写死错误地址。
+
 ## 方言数据维护
 
 - 方言的名称、颜色、简称、省份、历史时间线、风俗、地图示意范围统一放在 `assets/data/dialects.js`。主页、详情页、乡音社区和 `server.js` 都从这里读取，新增或修改方言时不需要再改四处。

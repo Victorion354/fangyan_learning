@@ -110,3 +110,38 @@ test('页面中的详情字段使用合并后的命名', () => {
   assert.match(detail, /\bd\.fullName\b/);
   assert.match(detail, /\bd\.area\b/);
 });
+
+test('主页图片使用响应式 srcset，并补充分享与结构化数据', () => {
+  const main = read('方言学习页.html');
+  for (const dialect of data.dialects) {
+    const expected = 'assets/' + dialect.id + '-800.webp 800w, assets/' + dialect.id + '-1600.webp 1600w';
+    assert.ok(main.includes(expected), dialect.id + ' 缺少 800w/1600w srcset');
+  }
+  assert.match(main, /sizes="\(min-width:1080px\) 220px/);
+  assert.match(main, /name="twitter:card"/);
+  assert.match(main, /property="og:image:alt"/);
+  assert.match(main, /'@type':'ItemList'/);
+  assert.match(main, /application\/ld\+json/);
+});
+
+test('详情页预连接地图依赖并输出页面结构化数据', () => {
+  const detail = read('fangyan-detail.html');
+  assert.match(detail, /rel="preconnect" href="https:\/\/cdn\.jsdelivr\.net"/);
+  assert.match(detail, /rel="preconnect" href="https:\/\/t0\.tianditu\.gov\.cn"/);
+  assert.match(detail, /width="1600" height="1067"/);
+  assert.match(detail, /function renderSeo\(d\)/);
+  assert.match(detail, /'@type':'WebPage'/);
+  assert.match(detail, /name="twitter:card"/);
+});
+
+test('试听按钮与音频标题保持可访问结构', () => {
+  const main = read('方言学习页.html');
+  assert.match(main, /<span class="sr-only">试听示例（普通话合成音）<\/span>/);
+  assert.doesNotMatch(main, /class="bub"[^>]*aria-label=/);
+
+  const detail = read('fangyan-detail.html');
+  assert.doesNotMatch(detail, /aria-label="试听示例/);
+  assert.match(detail, /<span class="sr-only">（普通话合成音，非方言真实发音）<\/span>/);
+  assert.match(detail, /'<h3>'\+esc\(a\.title/);
+  assert.match(detail, /title:g\.name\+'核心区'/);
+});

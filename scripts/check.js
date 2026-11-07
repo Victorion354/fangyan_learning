@@ -71,6 +71,8 @@ for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.htm
   let match;
   let index = 0;
   while ((match = re.exec(html))) {
+    const openTag = match[0].slice(0, match[0].indexOf('>') + 1);
+    if (/type=["'](?!text\/javascript|application\/javascript|module)/i.test(openTag)) continue;
     index += 1;
     try {
       new vm.Script(match[1], { filename: file + '#inline-' + index });
@@ -88,6 +90,16 @@ for (const [file, html] of [['方言学习页.html', main], ['fangyan-detail.htm
   while ((match = re.exec(html))) {
     const asset = path.join(root, decodeURIComponent(match[1]));
     if (!fs.existsSync(asset)) fail(file + ' 引用了不存在的资源：' + match[1]);
+  }
+
+  const srcsetRe = /srcset="([^"]+)"/g;
+  while ((match = srcsetRe.exec(html))) {
+    for (const candidate of match[1].split(',')) {
+      const url = candidate.trim().split(/\s+/)[0];
+      if (!url || /^(https?:)?\/\//.test(url) || url.startsWith('data:')) continue;
+      const asset = path.join(root, decodeURIComponent(url));
+      if (!fs.existsSync(asset)) fail(file + ' srcset 引用了不存在的资源：' + url);
+    }
   }
 }
 
