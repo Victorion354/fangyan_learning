@@ -5,8 +5,8 @@ ENV NODE_ENV=production
 
 # 只安装可选的生产依赖（pg / redis / S3 SDK）。
 # 不配置这些适配层时，应用本身仍然可以零依赖运行。
-COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY . .
 RUN mkdir -p /app/data && chown -R node:node /app

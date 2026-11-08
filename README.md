@@ -69,9 +69,10 @@ db/
 deploy/
   Caddyfile             反向代理 + 静态托管示例
   nginx.conf            Nginx 反向代理示例
-  minio-cors.json       MinIO 桶 CORS 配置
+scripts/
+  init-s3.js            本地对象存储建桶 / 匿名读 / CORS 初始化（Compose 一次性任务）
 Dockerfile              生产镜像（安装可选依赖）
-docker-compose.yml      应用 + PostgreSQL + Redis + MinIO + Caddy
+docker-compose.yml      应用 + PostgreSQL + Redis + RustFS + Caddy
 .env.example            部署环境变量模板
 assets/
   data/
@@ -152,6 +153,7 @@ DB_DRIVER=postgres
 DATABASE_URL=postgres://user:password@localhost:5432/fangyan
 REDIS_URL=redis://localhost:6379
 S3_ENDPOINT=https://s3.example.com
+S3_PUBLIC_ENDPOINT=https://s3.example.com   # 浏览器可达地址，用于预签名 PUT
 S3_REGION=us-east-1
 S3_BUCKET=fangyan-audio
 S3_ACCESS_KEY_ID=...
@@ -213,7 +215,7 @@ HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-
 
 ```bash
 cp .env.example .env
-# 编辑 .env，至少设置 CLIENT_TOKEN_SECRET、POSTGRES_PASSWORD、MINIO_ROOT_PASSWORD
+# 编辑 .env，至少设置 CLIENT_TOKEN_SECRET、POSTGRES_PASSWORD、S3_SECRET_ACCESS_KEY
 docker compose up -d --build
 ```
 
@@ -221,7 +223,7 @@ docker compose up -d --build
 
 - 页面与静态资源：`http://localhost/`（Caddy 直接托管）
 - API：`http://localhost/api/*`（反代到 Node `app:8787`）
-- MinIO 控制台：`http://localhost:9001`
+- 对象存储控制台：`http://localhost:9001`（本地用 RustFS，登录用 `.env` 里的 `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`）
 - PostgreSQL / Redis 只在 Compose 内部网络暴露，不映射到宿主机
 
 组件对应关系：
@@ -236,8 +238,10 @@ docker compose up -d --build
 注意事项：
 
 - `db/migrations/001_init.sql` 会在服务启动时自动执行，幂等；也可以手动用 `psql` 执行。
-- 浏览器直传对象存储需要桶 CORS 允许站点 Origin 的 `PUT`；本地 MinIO 的配置在 `deploy/minio-cors.json`，由 `minio-init` 自动应用。
+- 本地对象存储使用 **RustFS**（`rustfs/rustfs`）。MinIO 社区版镜像已在 2025 年从 Docker Hub 和 quay.io 下架，`minio/minio` 现在拉取会直接报 `pull access denied`，因此不再使用。生产环境请换成 AWS S3 / Cloudflare R2 / 阿里云 OSS 等正式服务。
+- 浏览器直传对象存储需要桶 CORS 允许站点 Origin 的 `PUT`；本地由 `s3-init` 一次性任务（`scripts/init-s3.js`）建桶、开放匿名读取并写入 CORS，允许来源由 `S3_CORS_ORIGINS` 控制，同时 RustFS 侧读取 `RUSTFS_CORS_ALLOWED_ORIGINS`。
 - 对象存储公开读地址由 `S3_PUBLIC_BASE_URL` 决定；生产环境建议绑定 CDN 域名，并把该域名加入 CSP（`deploy/Caddyfile` 使用 `S3_PUBLIC_ORIGIN`）。
+- 自建对象存储常出现「服务端走内网域名、浏览器走公网域名」的情况：`S3_ENDPOINT` 供服务端读写，`S3_PUBLIC_ENDPOINT` 专门用来生成预签名 PUT 地址。不设置时回退到 `S3_ENDPOINT`。Compose 里 `S3_ENDPOINT=http://rustfs:9000`、`S3_PUBLIC_ENDPOINT=http://localhost:9000`，两者指向同一个 RustFS。
 - 如果页面与 API 不同源，设置 `PUBLIC_API_ORIGIN`，否则 CSP 会拦截 `connect-src`。
 - 静态文件由 Caddy/Nginx 托管时，反向代理配置里已经补上安全响应头与 CSP；改用 CDN 时需要在 CDN 侧配置同等响应头。
 - 删除留言时会同步删除对应语音对象；但超过留言上限被自动裁剪的旧留言，其对象暂不会自动清理，需要后续加定时清理任务。

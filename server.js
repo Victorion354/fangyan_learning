@@ -51,6 +51,7 @@ const REDIS_URL = String(process.env.REDIS_URL || '').trim();
 const S3_BUCKET = String(process.env.S3_BUCKET || '').trim();
 const S3_REGION = String(process.env.S3_REGION || 'us-east-1').trim();
 const S3_ENDPOINT = String(process.env.S3_ENDPOINT || '').trim();
+const S3_PUBLIC_ENDPOINT = String(process.env.S3_PUBLIC_ENDPOINT || '').trim();
 const S3_PUBLIC_BASE_URL = String(process.env.S3_PUBLIC_BASE_URL || '').trim();
 const S3_ACCESS_KEY_ID = String(process.env.S3_ACCESS_KEY_ID || '').trim();
 const S3_SECRET_ACCESS_KEY = String(process.env.S3_SECRET_ACCESS_KEY || '').trim();
@@ -84,6 +85,7 @@ function rememberOrigin(value) {
 }
 rememberOrigin(process.env.PUBLIC_API_ORIGIN);
 rememberOrigin(S3_ENDPOINT);
+rememberOrigin(S3_PUBLIC_ENDPOINT);
 rememberOrigin(S3_PUBLIC_BASE_URL);
 const EXTRA_ORIGIN_TEXT = Array.from(EXTRA_ORIGINS).join(' ');
 
@@ -883,6 +885,7 @@ async function start() {
     bucket: S3_BUCKET,
     region: S3_REGION,
     endpoint: S3_ENDPOINT,
+    publicEndpoint: S3_PUBLIC_ENDPOINT,
     publicBaseUrl: S3_PUBLIC_BASE_URL,
     accessKeyId: S3_ACCESS_KEY_ID,
     secretAccessKey: S3_SECRET_ACCESS_KEY,

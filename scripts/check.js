@@ -82,7 +82,8 @@ const scriptFiles = new Set([
   'lib/redis.js',
   'lib/object-store.js',
   'lib/optional.js',
-  'lib/store.js'
+  'lib/store.js',
+  'scripts/init-s3.js'
 ]);
 for (const html of [index, main, detail]) {
   const re = /<script[^>]+src="(assets\/[^"?#]+\.js)(?:[?#][^"]*)?"/g;
