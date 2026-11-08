@@ -1,9 +1,14 @@
-/* 一声一味 · 本地实时服务
+/* 一声一味 · 社区服务
  *
- * 零依赖 Node.js 服务：
+ * 默认零依赖 Node.js 服务：
  *   - 静态托管本目录（含中文文件名）
  *   - 乡音社区 REST API + SSE 实时推送
  *   - 人口公开统计数据 API（带版本与校验时间）
+ *
+ * 生产环境可通过环境变量启用可选适配层：
+ *   - DATABASE_URL / DB_DRIVER=postgres  → PostgreSQL
+ *   - REDIS_URL                           → 跨实例限流与 SSE 广播
+ *   - S3_BUCKET 等                        → S3 兼容对象存储（语音直传）
  *
  * 启动：
  *   node server.js
@@ -24,7 +29,9 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const FANGYAN_DATA = require('./assets/data/dialects.js');
-const { CommunityStore } = require('./lib/community-store.js');
+const { createStore } = require('./lib/store.js');
+const { createRedis } = require('./lib/redis.js');
+const { createObjectStore, audioExtension } = require('./lib/object-store.js');
 
 const ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
@@ -35,8 +42,21 @@ const PORT = Number(process.env.PORT) || 8787;
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_POSTS = 500;
 const MAX_AUDIO_CHARS = 2400000;
+const MAX_AUDIO_BYTES = Math.floor(1.5 * 1024 * 1024);
 const MAX_BODY_BYTES = 3200000;
 const ADMIN_TOKEN = (process.env.COMMUNITY_ADMIN_TOKEN || '').trim();
+const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
+const DB_DRIVER = String(process.env.DB_DRIVER || (DATABASE_URL ? 'postgres' : 'sqlite')).toLowerCase();
+const REDIS_URL = String(process.env.REDIS_URL || '').trim();
+const S3_BUCKET = String(process.env.S3_BUCKET || '').trim();
+const S3_REGION = String(process.env.S3_REGION || 'us-east-1').trim();
+const S3_ENDPOINT = String(process.env.S3_ENDPOINT || '').trim();
+const S3_PUBLIC_BASE_URL = String(process.env.S3_PUBLIC_BASE_URL || '').trim();
+const S3_ACCESS_KEY_ID = String(process.env.S3_ACCESS_KEY_ID || '').trim();
+const S3_SECRET_ACCESS_KEY = String(process.env.S3_SECRET_ACCESS_KEY || '').trim();
+const S3_FORCE_PATH_STYLE = String(process.env.S3_FORCE_PATH_STYLE || '').toLowerCase() !== 'false';
+const UPLOAD_TTL_SECONDS = Math.min(900, Math.max(60, Number(process.env.UPLOAD_TTL_SECONDS) || 300));
+const TRUST_PROXY = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
 const ALLOWED_ORIGINS = new Set(
   String(process.env.ALLOWED_ORIGINS || '')
     .split(',')
@@ -53,6 +73,19 @@ const CLIENT_TOKEN_TTL_MS = (() => {
 
 const BOARDS = new Set(FANGYAN_DATA.dialects.map((d) => d.id));
 const TYPES = new Set(['dialect', 'suggest']);
+
+/* CSP 允许的额外来源：对象存储直传与跨域 API */
+const EXTRA_ORIGINS = new Set();
+function rememberOrigin(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (url.protocol === 'http:' || url.protocol === 'https:') EXTRA_ORIGINS.add(url.origin);
+  } catch (_) {}
+}
+rememberOrigin(process.env.PUBLIC_API_ORIGIN);
+rememberOrigin(S3_ENDPOINT);
+rememberOrigin(S3_PUBLIC_BASE_URL);
+const EXTRA_ORIGIN_TEXT = Array.from(EXTRA_ORIGINS).join(' ');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -97,6 +130,11 @@ function gzipBuffer(key, buffer) {
   return out;
 }
 
+let store = null;
+let redis = null;
+let objectStore = null;
+let server = null;
+let shuttingDown = false;
 const sseClients = new Set();
 const rateBuckets = new Map();
 
@@ -238,12 +276,11 @@ function loadCommunity() {
   }
 }
 
-const store = new CommunityStore({ dbFile: COMMUNITY_DB, maxPosts: MAX_POSTS });
-const imported = store.importLegacy(loadCommunity());
-if (imported > 0) console.log('已从 community.json 导入 ' + imported + ' 条留言到 SQLite');
-
 function publicPost(post, clientId) {
   if (!post) return null;
+  const audio = post.audio || (
+    post.audioKey && objectStore ? objectStore.publicUrl(post.audioKey) : null
+  );
   return {
     id: post.id,
     board: post.board,
@@ -251,7 +288,7 @@ function publicPost(post, clientId) {
     name: post.name,
     type: post.type,
     text: post.text,
-    audio: post.audio,
+    audio: audio,
     audioName: post.audioName,
     likes: Math.max(0, Number(post.likes) || 0),
     liked: !!post.liked,
@@ -286,7 +323,18 @@ function normalizeNewPost(input, clientId) {
   const text = clean(input.text, 200);
   if (!text) throw httpError(400, '留言内容不能为空');
   let audio = null;
-  if (input.audio != null && input.audio !== '') {
+  let audioKey = null;
+  if (input.audioKey != null && input.audioKey !== '') {
+    if (!objectStore) throw httpError(503, '对象存储未配置，当前只支持内联语音');
+    const key = clean(input.audioKey, 200);
+    if (!/^audio\/[A-Za-z0-9_-]{6,64}\/[A-Za-z0-9._-]{1,80}$/.test(key)) {
+      throw httpError(400, '语音标识不合法');
+    }
+    if (!key.startsWith('audio/' + clientId + '/')) {
+      throw httpError(403, '语音不属于当前会话');
+    }
+    audioKey = key;
+  } else if (input.audio != null && input.audio !== '') {
     if (typeof input.audio !== 'string' || !/^data:audio\/[a-z0-9.+-]+;base64,/i.test(input.audio)) {
       throw httpError(400, '语音格式不支持');
     }
@@ -301,6 +349,7 @@ function normalizeNewPost(input, clientId) {
     type: TYPES.has(input.type) ? input.type : 'dialect',
     text: text,
     audio: audio,
+    audioKey: audioKey,
     audioName: clean(input.audioName, 80),
     likes: 0,
     likedBy: [],
@@ -389,10 +438,10 @@ function setSecurityHeaders(req, res) {
     "script-src-attr 'none'",
     "style-src 'self' https://cdn.jsdelivr.net https://unpkg.com",
     "style-src-attr 'unsafe-inline'",
-    "img-src 'self' data: blob: https://*.tianditu.gov.cn https://cdn.jsdelivr.net https://unpkg.com",
+    "img-src 'self' data: blob: https://*.tianditu.gov.cn https://cdn.jsdelivr.net https://unpkg.com" + (EXTRA_ORIGIN_TEXT ? ' ' + EXTRA_ORIGIN_TEXT : ''),
     "font-src 'self' data:",
-    "media-src 'self' data: blob:",
-    "connect-src 'self' https://*.tianditu.gov.cn",
+    "media-src 'self' data: blob:" + (EXTRA_ORIGIN_TEXT ? ' ' + EXTRA_ORIGIN_TEXT : ''),
+    "connect-src 'self' https://*.tianditu.gov.cn" + (EXTRA_ORIGIN_TEXT ? ' ' + EXTRA_ORIGIN_TEXT : ''),
     "worker-src 'self' blob:",
     "manifest-src 'self'"
   ].join('; '));
@@ -432,9 +481,7 @@ function setCors(req, res) {
   return origin;
 }
 
-function rateLimit(req, bucket, max, windowMs) {
-  const ip = (req.socket && req.socket.remoteAddress) || 'unknown';
-  const key = bucket + ':' + ip;
+function memoryRateLimit(key, max, windowMs) {
   const now = Date.now();
   if (rateBuckets.size > 2000) {
     for (const [oldKey, oldEntry] of rateBuckets) {
@@ -448,8 +495,30 @@ function rateLimit(req, bucket, max, windowMs) {
   }
   entry.count += 1;
   if (entry.count > max) {
+    return { allowed: false, retryAfter: Math.max(1, Math.ceil((entry.start + windowMs - now) / 1000)) };
+  }
+  return { allowed: true };
+}
+
+async function rateLimit(req, bucket, max, windowMs) {
+  const forwarded = TRUST_PROXY
+    ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+    : '';
+  const ip = forwarded || (req.socket && req.socket.remoteAddress) || 'unknown';
+  const key = 'fangyan:rl:' + bucket + ':' + ip;
+  let result = null;
+  if (redis) {
+    try {
+      result = await redis.hit(key, max, windowMs);
+    } catch (err) {
+      console.warn('Redis 限流失败，回退内存模式：' + err.message);
+      redis = null;
+    }
+  }
+  if (!result) result = memoryRateLimit(key, max, windowMs);
+  if (!result.allowed) {
     const err = httpError(429, '操作太频繁，请稍后再试');
-    err.retryAfter = Math.max(1, Math.ceil((entry.start + windowMs - now) / 1000));
+    err.retryAfter = result.retryAfter;
     throw err;
   }
 }
@@ -460,12 +529,23 @@ function sseSend(res, event, data) {
   } catch (_) {}
 }
 
-function broadcastRefresh() {
-  const payload = { at: Date.now(), count: store.count() };
+async function broadcastRefresh() {
+  let count = 0;
+  try { count = await store.count(); } catch (_) {}
+  const payload = { at: Date.now(), count: count };
+  if (redis) {
+    try {
+      await redis.publish('refresh', payload);
+      return;
+    } catch (err) {
+      console.warn('Redis 广播失败，回退本实例推送：' + err.message);
+      redis = null;
+    }
+  }
   for (const client of sseClients) sseSend(client, 'refresh', payload);
 }
 
-function openStream(req, res, url) {
+async function openStream(req, res, url) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
@@ -473,7 +553,9 @@ function openStream(req, res, url) {
     'X-Accel-Buffering': 'no'
   });
   res.write('retry: 3000\n\n');
-  sseSend(res, 'hello', { time: Date.now(), count: store.count() });
+  let count = 0;
+  try { count = await store.count(); } catch (_) {}
+  sseSend(res, 'hello', { time: Date.now(), count: count });
   sseClients.add(res);
   const heartbeat = setInterval(() => {
     try { res.write(': ping\n\n'); } catch (_) {}
@@ -511,7 +593,7 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === '/api/session' && method === 'POST') {
-    rateLimit(req, 'session', 60, 60000);
+    await rateLimit(req, 'session', 60, 60000);
     const existing = verifyClientToken(clientTokenFrom(req));
     const sessionClientId = existing ? existing.cid : newClientId();
     const expiresAt = Date.now() + CLIENT_TOKEN_TTL_MS;
@@ -528,16 +610,22 @@ async function handleApi(req, res, url) {
       ok: true,
       mode: 'server',
       boards: Array.from(BOARDS),
-      posts: store.count(),
+      posts: await store.count(),
       uptime: Math.round(process.uptime()),
-      time: new Date().toISOString()
+      time: new Date().toISOString(),
+      features: {
+        store: store.driver || 'sqlite',
+        redis: !!redis,
+        objectStorage: !!objectStore,
+        uploads: objectStore ? 'presigned' : 'inline'
+      }
     });
     return;
   }
 
   if (pathname === '/api/community' && method === 'GET') {
     const board = url.searchParams.get('board');
-    const list = store.list(board && BOARDS.has(board) ? board : null, clientId);
+    const list = await store.list(board && BOARDS.has(board) ? board : null, clientId);
     sendJson(res, 200, {
       posts: list.map((p) => publicPost(p, clientId)),
       serverTime: Date.now()
@@ -546,46 +634,80 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === '/api/community/stream' && method === 'GET') {
-    openStream(req, res, url);
+    await openStream(req, res, url);
+    return;
+  }
+
+  if (pathname === '/api/uploads/sign' && method === 'POST') {
+    await rateLimit(req, 'upload', 30, 60000);
+    const uploaderId = requireClientId(req);
+    if (!objectStore) throw httpError(503, '对象存储未配置，当前使用内联语音');
+    const body = await readBody(req);
+    const contentType = String(body.contentType || '').split(';')[0].trim().toLowerCase();
+    const ext = audioExtension(contentType);
+    if (!ext) throw httpError(400, '不支持的语音类型');
+    const size = Number(body.size);
+    if (!Number.isFinite(size) || size <= 0) throw httpError(400, '语音大小不合法');
+    if (size > MAX_AUDIO_BYTES) throw httpError(413, '语音太大，请控制在 1.5MB 以内');
+    const key = 'audio/' + uploaderId + '/' + Date.now().toString(36) +
+      '-' + crypto.randomBytes(8).toString('hex') + ext;
+    const signed = await objectStore.signUpload({
+      key: key,
+      contentType: contentType,
+      expiresIn: UPLOAD_TTL_SECONDS
+    });
+    sendJson(res, 200, {
+      key: key,
+      uploadUrl: signed.url,
+      method: signed.method,
+      headers: signed.headers,
+      publicUrl: objectStore.publicUrl(key),
+      expiresAt: signed.expiresAt
+    });
     return;
   }
 
   if (pathname === '/api/community' && method === 'POST') {
-    rateLimit(req, 'post', 20, 60000);
+    await rateLimit(req, 'post', 20, 60000);
     const authorId = requireClientId(req);
     const body = await readBody(req);
     const post = normalizeNewPost(body, authorId);
     const deleteToken = crypto.randomBytes(24).toString('hex');
     post.deleteTokenHash = hashToken(deleteToken);
-    const saved = store.create(post);
-    broadcastRefresh();
+    const saved = await store.create(post);
+    await broadcastRefresh();
     sendJson(res, 201, { post: publicPost(saved, authorId), deleteToken });
     return;
   }
 
   const likeMatch = pathname.match(/^\/api\/community\/([A-Za-z0-9_-]{1,64})\/like$/);
   if (likeMatch && method === 'POST') {
-    rateLimit(req, 'like', 120, 60000);
+    await rateLimit(req, 'like', 120, 60000);
     const likerId = requireClientId(req);
     const body = await readBody(req);
-    const post = store.setLike(likeMatch[1], likerId, body.liked === true);
+    const post = await store.setLike(likeMatch[1], likerId, body.liked === true);
     if (!post) throw httpError(404, '留言不存在');
-    broadcastRefresh();
+    await broadcastRefresh();
     sendJson(res, 200, { post: publicPost(post, likerId) });
     return;
   }
 
   const deleteMatch = pathname.match(/^\/api\/community\/([A-Za-z0-9_-]{1,64})$/);
   if (deleteMatch && method === 'DELETE') {
-    rateLimit(req, 'delete', 30, 60000);
-    const post = store.get(deleteMatch[1], null);
+    await rateLimit(req, 'delete', 30, 60000);
+    const post = await store.get(deleteMatch[1], null);
     if (!post) throw httpError(404, '留言不存在');
     const deleteToken = String(req.headers['x-delete-token'] || '').trim();
     const adminToken = String(req.headers['x-admin-token'] || '').trim();
     const allowed = tokenMatches(deleteToken, post.deleteTokenHash) || adminMatches(adminToken);
     if (!allowed) throw httpError(403, '没有删除权限：需要发布时保存的删除令牌');
-    store.remove(post.id);
-    broadcastRefresh();
+    await store.remove(post.id);
+    if (post.audioKey && objectStore) {
+      objectStore.remove(post.audioKey).catch((err) => {
+        console.warn('删除语音对象失败：' + err.message);
+      });
+    }
+    await broadcastRefresh();
     sendJson(res, 200, { ok: true, id: deleteMatch[1] });
     return;
   }
@@ -725,67 +847,129 @@ function serveStatic(req, res, url) {
   });
 }
 
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost'));
-  setSecurityHeaders(req, res);
-  if (url.pathname.startsWith('/api/')) {
-    const corsOrigin = setCors(req, res);
-    if (req.method === 'OPTIONS' && req.headers.origin && !corsOrigin) {
-      sendJson(res, 403, { error: '来源不在 CORS 允许列表' });
-      return;
-    }
-    handleApi(req, res, url).catch((err) => {
-      if (res.headersSent) {
-        try { res.end(); } catch (_) {}
+function createHttpServer() {
+  return http.createServer((req, res) => {
+    const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost'));
+    setSecurityHeaders(req, res);
+    if (url.pathname.startsWith('/api/')) {
+      const corsOrigin = setCors(req, res);
+      if (req.method === 'OPTIONS' && req.headers.origin && !corsOrigin) {
+        sendJson(res, 403, { error: '来源不在 CORS 允许列表' });
         return;
       }
-      const status = err.status || 500;
-      if (status >= 500) console.error(err);
-      if (err.retryAfter) res.setHeader('Retry-After', String(err.retryAfter));
-      sendJson(res, status, { error: err.message || '服务器错误' });
-    });
-    return;
-  }
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8', 'Allow': 'GET, HEAD' });
-    res.end('Method Not Allowed');
-    return;
-  }
-  serveStatic(req, res, url);
-});
+      handleApi(req, res, url).catch((err) => {
+        if (res.headersSent) {
+          try { res.end(); } catch (_) {}
+          return;
+        }
+        const status = err.status || 500;
+        if (status >= 500) console.error(err);
+        if (err.retryAfter) res.setHeader('Retry-After', String(err.retryAfter));
+        sendJson(res, status, { error: err.message || '服务器错误' });
+      });
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8', 'Allow': 'GET, HEAD' });
+      res.end('Method Not Allowed');
+      return;
+    }
+    serveStatic(req, res, url);
+  });
+}
 
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error('端口 ' + PORT + ' 已被占用。可以换一个端口：');
-    console.error('  Windows CMD:  set PORT=8788 && node server.js');
-    console.error('  PowerShell:   $env:PORT=8788; node server.js');
-    console.error('  macOS/Linux:  PORT=8788 node server.js');
-  } else {
-    console.error(err);
+async function start() {
+  objectStore = createObjectStore({
+    bucket: S3_BUCKET,
+    region: S3_REGION,
+    endpoint: S3_ENDPOINT,
+    publicBaseUrl: S3_PUBLIC_BASE_URL,
+    accessKeyId: S3_ACCESS_KEY_ID,
+    secretAccessKey: S3_SECRET_ACCESS_KEY,
+    forcePathStyle: S3_FORCE_PATH_STYLE
+  });
+
+  store = await createStore({
+    driver: DB_DRIVER,
+    connectionString: DATABASE_URL,
+    dbFile: COMMUNITY_DB,
+    maxPosts: MAX_POSTS
+  });
+
+  if (REDIS_URL) {
+    try {
+      redis = await createRedis({
+        url: REDIS_URL,
+        channel: 'fangyan:community:refresh',
+        logger: console
+      });
+      redis.onMessage((message) => {
+        if (!message || message.event !== 'refresh') return;
+        for (const client of sseClients) sseSend(client, 'refresh', message.payload || {});
+      });
+    } catch (err) {
+      console.warn('Redis 初始化失败，回退单实例模式：' + err.message);
+      redis = null;
+    }
   }
-  process.exitCode = 1;
-});
 
-server.listen(PORT, HOST, () => {
-  console.log('一声一味 · 本地实时服务已启动');
-  console.log('  页面：http://localhost:' + PORT + '/');
-  console.log('  天地图白名单不接受 localhost；本地调试可用 http://lvh.me:' + PORT + '/');
-  console.log('  健康检查：http://localhost:' + PORT + '/api/health');
-  console.log('  社区数据库：' + COMMUNITY_DB);
-  console.log('  旧社区 JSON：' + COMMUNITY_FILE + '（仅首次导入）');
-  console.log('  人口数据：' + POPULATION_FILE);
-  console.log('  按 Ctrl+C 停止。');
-});
+  const imported = await store.importLegacy(loadCommunity());
+  if (imported > 0) {
+    console.log('已从 community.json 导入 ' + imported + ' 条留言到 ' + (store.driver === 'postgres' ? 'PostgreSQL' : 'SQLite'));
+  }
 
-function shutdown(signal) {
-  console.log('\n收到 ' + signal + '，正在关闭社区数据库…');
-  try { store.close(); } catch (err) { console.error('关闭失败：' + err.message); }
+  server = createHttpServer();
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error('端口 ' + PORT + ' 已被占用。可以换一个端口：');
+      console.error('  Windows CMD:  set PORT=8788 && node server.js');
+      console.error('  PowerShell:   $env:PORT=8788; node server.js');
+      console.error('  macOS/Linux:  PORT=8788 node server.js');
+    } else {
+      console.error(err);
+    }
+    process.exitCode = 1;
+  });
+
+  server.listen(PORT, HOST, () => {
+    console.log('一声一味 · 社区服务已启动');
+    console.log('  页面：http://localhost:' + PORT + '/');
+    console.log('  天地图白名单不接受 localhost；本地调试可用 http://lvh.me:' + PORT + '/');
+    console.log('  健康检查：http://localhost:' + PORT + '/api/health');
+    console.log('  社区数据层：' + (store.driver === 'postgres' ? 'PostgreSQL' : 'SQLite ' + COMMUNITY_DB));
+    console.log('  Redis：' + (redis ? '已连接（限流 + SSE 广播）' : '未启用（单实例内存模式）'));
+    console.log('  对象存储：' + (objectStore ? 'S3 兼容 / ' + objectStore.bucket : '未启用（语音内联存储）'));
+    console.log('  旧社区 JSON：' + COMMUNITY_FILE + '（仅首次导入）');
+    console.log('  人口数据：' + POPULATION_FILE);
+    console.log('  按 Ctrl+C 停止。');
+  });
+}
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log('\n收到 ' + signal + '，正在关闭服务…');
   for (const client of sseClients) {
     try { client.end(); } catch (_) {}
   }
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 1500).unref();
+  try { if (store) await store.close(); } catch (err) { console.error('关闭数据库失败：' + err.message); }
+  try { if (redis) await redis.close(); } catch (err) { console.error('关闭 Redis 失败：' + err.message); }
+  try { if (objectStore) objectStore.close(); } catch (_) {}
+  if (server) {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000).unref();
+  } else {
+    process.exit(0);
+  }
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+start().catch((err) => {
+  console.error('启动失败：' + err.message);
+  if (err.code === 'OPTIONAL_DEPENDENCY_MISSING') {
+    console.error('提示：开发模式不需要这些包；生产部署请先运行 npm install。');
+  }
+  process.exitCode = 1;
+});

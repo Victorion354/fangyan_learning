@@ -65,11 +65,25 @@ if (detailJs.includes('var DET={')) fail('详情页脚本仍保留旧 DET 数据
 if (community.includes('CM_PROVINCES')) fail('社区仍保留重复的 CM_PROVINCES');
 if (!community.includes('FANGYAN_DATA')) fail('社区没有读取共享数据');
 if (!server.includes("require('./assets/data/dialects.js')")) fail('服务端没有读取共享数据');
-if (!server.includes("require('./lib/community-store.js')")) fail('服务端没有使用 SQLite 数据层');
-if (!read('lib/community-store.js').includes("require('node:sqlite')")) fail('数据层没有使用 node:sqlite');
+if (!server.includes("require('./lib/store.js')")) fail('服务端没有使用数据层工厂');
+if (!read('lib/store.js').includes("require('./community-store.js')")) fail('数据层工厂没有 SQLite 实现');
+if (!read('lib/store.js').includes("require('./postgres-store.js')")) fail('数据层工厂没有 PostgreSQL 实现');
+if (!read('lib/community-store.js').includes("require('node:sqlite')")) fail('SQLite 数据层没有使用 node:sqlite');
+if (!read('lib/postgres-store.js').includes("requireOptional('pg')")) fail('PostgreSQL 数据层没有按需加载 pg');
+if (!read('lib/redis.js').includes("requireOptional('redis')")) fail('Redis 适配层没有按需加载 redis');
+if (!read('lib/object-store.js').includes("requireOptional('@aws-sdk/client-s3')")) fail('对象存储适配层没有按需加载 S3 SDK');
+if (!community.includes('/api/uploads/sign')) fail('社区前端没有接入对象存储预签名上传');
 
 /* 3. 脚本语法 */
-const scriptFiles = new Set(['server.js', 'lib/community-store.js']);
+const scriptFiles = new Set([
+  'server.js',
+  'lib/community-store.js',
+  'lib/postgres-store.js',
+  'lib/redis.js',
+  'lib/object-store.js',
+  'lib/optional.js',
+  'lib/store.js'
+]);
 for (const html of [index, main, detail]) {
   const re = /<script[^>]+src="(assets\/[^"?#]+\.js)(?:[?#][^"]*)?"/g;
   let match;

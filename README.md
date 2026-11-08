@@ -56,9 +56,23 @@
 index.html              入口（跳转到方言学习页.html）
 方言学习页.html          主页（含“每人一句家乡话”乡音社区）
 fangyan-detail.html     方言详情页（发展脉络、人言乡音、地图、人口）
-server.js               零依赖本地服务：静态托管 + 社区 API/SSE + 人口 API
+server.js               社区服务：静态托管 + 社区 API/SSE + 人口 API
 lib/
-  community-store.js    社区 SQLite 数据层（Node 内置 node:sqlite）
+  community-store.js    SQLite 数据层（Node 内置 node:sqlite，开发默认）
+  postgres-store.js     PostgreSQL 数据层（生产可选）
+  store.js              数据层工厂（按环境选择 SQLite / PostgreSQL）
+  redis.js              Redis 适配层（跨实例限流 + SSE 广播）
+  object-store.js       S3 兼容对象存储适配层（语音预签名直传）
+  optional.js           可选依赖加载器（未安装时给出清晰提示）
+db/
+  migrations/001_init.sql  PostgreSQL 建表脚本（启动时自动执行）
+deploy/
+  Caddyfile             反向代理 + 静态托管示例
+  nginx.conf            Nginx 反向代理示例
+  minio-cors.json       MinIO 桶 CORS 配置
+Dockerfile              生产镜像（安装可选依赖）
+docker-compose.yml      应用 + PostgreSQL + Redis + MinIO + Caddy
+.env.example            部署环境变量模板
 assets/
   data/
     dialects.js         方言共享数据：主页、详情页、社区与服务端共用（唯一数据源）
@@ -86,16 +100,18 @@ data/
 _genmap.py              重新生成 assets/mapdata.js
 _gengeo.py              重新生成 assets/chinageo.js
 _shots/                 开发过程中的验证截图
-package.json            零依赖脚本入口（start / build / check / test）
+package.json            脚本入口（默认零运行时依赖，生产可选依赖见 optionalDependencies）
 scripts/check.js        静态数据、页面引用、脚本语法与本地资源检查
 scripts/version-assets.js  按内容哈希刷新 JS/CSS 版本号
-tests/                  node:test 自动化测试（共享数据 + SQLite 数据层 + 服务端接口）
+tests/                  node:test 自动化测试（共享数据 + 数据层适配 + 服务端接口）
 .github/workflows/ci.yml  Node 22/24 自动检查与测试
 ```
 
 ## 开发与检查
 
-项目仍然保持**零运行时依赖**，只要求 Node.js 22.13 及以上（社区数据层使用内置的 `node:sqlite`，该版本起不再需要 `--experimental-sqlite` 开关）。`package.json` 只提供脚本，没有 `dependencies`，不需要 `npm install`。
+项目默认保持**零运行时依赖**，只要求 Node.js 22.13 及以上（社区数据层使用内置的 `node:sqlite`，该版本起不再需要 `--experimental-sqlite` 开关）。`package.json` 没有 `dependencies`，只有可选的 `optionalDependencies`（`pg` / `redis` / S3 SDK）；不启用生产适配层时不需要 `npm install`。
+
+生产部署（PostgreSQL + Redis + 对象存储）需要先安装这些可选依赖，或直接使用仓库里的 Docker Compose。
 
 ```bash
 npm start        # 等同于 node server.js
@@ -128,15 +144,32 @@ COMMUNITY_ADMIN_TOKEN=随机长字符串
 CLIENT_TOKEN_SECRET=随机长字符串   # 不设置时每个进程随机生成，重启后旧会话失效
 CLIENT_TOKEN_TTL_MS=86400000       # 匿名会话有效期，默认 24 小时
 ALLOWED_ORIGINS=http://example.com,https://example.org
+PUBLIC_API_ORIGIN=https://api.example.com   # 页面与 API 不同源时用于 CSP
+TRUST_PROXY=true                    # 位于 Caddy / Nginx 之后时信任 X-Forwarded-For
+
+# 生产适配层（不配置则使用 SQLite + 内存限流 + 内联语音）
+DB_DRIVER=postgres
+DATABASE_URL=postgres://user:password@localhost:5432/fangyan
+REDIS_URL=redis://localhost:6379
+S3_ENDPOINT=https://s3.example.com
+S3_REGION=us-east-1
+S3_BUCKET=fangyan-audio
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+S3_PUBLIC_BASE_URL=https://cdn.example.com/fangyan-audio
+S3_FORCE_PATH_STYLE=true
+UPLOAD_TTL_SECONDS=300
 ```
 
-`community.json` 只在 SQLite 中还没有导入标记（`meta.community_json_imported`）时读取一次，把旧留言、点赞与删除令牌哈希迁移进数据库；之后所有读写都走 SQLite，JSON 文件不再更新。数据库启用 WAL 模式与外键约束，留言上限由服务端统一裁剪。
+`community.json` 只在数据库中还没有导入标记（`meta.community_json_imported`）时读取一次，把旧留言、点赞与删除令牌哈希迁移进数据库；之后所有读写都走当前数据层，JSON 文件不再更新。SQLite 启用 WAL 模式与外键约束；PostgreSQL 启动时会自动执行 `db/migrations/001_init.sql`（幂等）。留言上限由服务端统一裁剪。
+
+`DATABASE_URL` 存在时自动使用 PostgreSQL，也可以用 `DB_DRIVER=postgres` 显式指定。`REDIS_URL` 用于跨实例限流与 SSE 广播；未配置时回退到单实例内存模式。配置 `S3_BUCKET` 后，`POST /api/uploads/sign` 会返回预签名 PUT 地址，浏览器把语音直接上传到对象存储，留言只保存对象键；未配置时继续使用内联 data URI。
 
 `ALLOWED_ORIGINS` 用逗号分隔允许跨域调用 API 的来源；不设置时只允许同源请求。设置后同源仍然可用。如果直接用 `file://` 打开页面并连接本机服务，浏览器会发送 `Origin: null`，需要显式把 `null` 加入白名单，否则社区会回退到本地模式。
 
 社区写操作使用服务端签发的匿名会话：页面先请求 `POST /api/session`，服务端返回带过期时间的 HMAC 签名令牌与随机客户端 ID，后续通过 `X-Client-Token` 或 `Authorization: Bearer <token>` 提交。读取接口仍兼容旧的 `X-Client-Id`，但发布和点赞不再接受只带客户端 ID 的请求。设置固定的 `CLIENT_TOKEN_SECRET` 后，服务重启不会让已签发令牌立即失效。
 
-测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入和人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化与旧 JSON 导入。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
+测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入、对象存储未配置时的降级行为、人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化、旧 JSON 导入和数据层/对象存储适配器。当前共 43 项测试。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
 
 `server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。
 
@@ -161,6 +194,55 @@ worker-src 'self' blob:; manifest-src 'self'
 HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-Opener-Policy: same-origin`；HTTP 本地调试不发送这两个头，避免浏览器忽略或误伤。
 
 发布、点赞和删除接口使用进程内限流（发布 20 次/分钟、点赞 120 次/分钟、删除 30 次/分钟），超限返回 `429` 并带 `Retry-After`。限流表会定期清理过期记录，但重启服务后会清零，仍不是分布式生产级限流。
+
+## 生产部署（方案 B）
+
+面向公网部署时，推荐把静态资源、API、数据和语音拆开：
+
+```text
+用户浏览器
+  ├─ 静态资源 → CDN / 对象存储
+  └─ /api → Caddy / Nginx 反向代理
+               ├─ Node API（server.js）
+               ├─ PostgreSQL（留言、点赞、元数据）
+               ├─ Redis（限流、SSE 多实例广播）
+               └─ 对象存储（音频、图片）
+```
+
+仓库提供一套可直接启动的最小栈：
+
+```bash
+cp .env.example .env
+# 编辑 .env，至少设置 CLIENT_TOKEN_SECRET、POSTGRES_PASSWORD、MINIO_ROOT_PASSWORD
+docker compose up -d --build
+```
+
+启动后：
+
+- 页面与静态资源：`http://localhost/`（Caddy 直接托管）
+- API：`http://localhost/api/*`（反代到 Node `app:8787`）
+- MinIO 控制台：`http://localhost:9001`
+- PostgreSQL / Redis 只在 Compose 内部网络暴露，不映射到宿主机
+
+组件对应关系：
+
+| 组件 | 开发默认 | 生产方案 | 启用方式 |
+| --- | --- | --- | --- |
+| 数据层 | SQLite（`node:sqlite`） | PostgreSQL | `DATABASE_URL` 或 `DB_DRIVER=postgres` |
+| 限流 / SSE | 进程内内存 | Redis | `REDIS_URL` |
+| 语音 | 内联 data URI | S3 兼容对象存储 | `S3_BUCKET` + 凭据 |
+| 静态资源 | Node 静态托管 | Caddy / CDN | `deploy/Caddyfile` 或 `deploy/nginx.conf` |
+
+注意事项：
+
+- `db/migrations/001_init.sql` 会在服务启动时自动执行，幂等；也可以手动用 `psql` 执行。
+- 浏览器直传对象存储需要桶 CORS 允许站点 Origin 的 `PUT`；本地 MinIO 的配置在 `deploy/minio-cors.json`，由 `minio-init` 自动应用。
+- 对象存储公开读地址由 `S3_PUBLIC_BASE_URL` 决定；生产环境建议绑定 CDN 域名，并把该域名加入 CSP（`deploy/Caddyfile` 使用 `S3_PUBLIC_ORIGIN`）。
+- 如果页面与 API 不同源，设置 `PUBLIC_API_ORIGIN`，否则 CSP 会拦截 `connect-src`。
+- 静态文件由 Caddy/Nginx 托管时，反向代理配置里已经补上安全响应头与 CSP；改用 CDN 时需要在 CDN 侧配置同等响应头。
+- 删除留言时会同步删除对应语音对象；但超过留言上限被自动裁剪的旧留言，其对象暂不会自动清理，需要后续加定时清理任务。
+- Redis 不可用时服务会回退到单实例内存限流；生产环境建议监控 Redis 连接。
+- 当前仍没有账号、内容审核、举报和隐私合规流程，**不能直接当作公开上线服务**。
 
 ## 性能与 SEO
 
@@ -217,12 +299,13 @@ HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-
 ## 乡音社区说明（主页面）
 
 - 社区入口在主页末尾 `#community`，十个方言详情页不再重复放置社区模块，只保留指向主页社区的链接。
-- **有 Node 服务时**：留言保存到 `data/community.sqlite`（Node 内置 SQLite），通过 `/api/community` 读写，并用 SSE（`/api/community/stream`）向所有打开的页面推送刷新事件；点赞按匿名会话客户端 ID 去重。发布和点赞要求服务端签发的匿名会话令牌（`POST /api/session` → `X-Client-Token` 或 `Authorization: Bearer`），读取仍兼容 `X-Client-Id`。令牌只能区分浏览器会话，不是账号认证；任何人都可以申请新令牌。
+- **有 Node 服务时**：留言默认保存到 `data/community.sqlite`（Node 内置 SQLite）；配置 `DATABASE_URL` 后改用 PostgreSQL。通过 `/api/community` 读写，并用 SSE（`/api/community/stream`）向所有打开的页面推送刷新事件；点赞按匿名会话客户端 ID 去重。发布和点赞要求服务端签发的匿名会话令牌（`POST /api/session` → `X-Client-Token` 或 `Authorization: Bearer`），读取仍兼容 `X-Client-Id`。令牌只能区分浏览器会话，不是账号认证；任何人都可以申请新令牌。
 - **跨域限制**：API 默认只允许同源请求；需要其他站点调用时，用 `ALLOWED_ORIGINS` 显式配置白名单，预检来自未授权来源会返回 `403`。
 - **删除权限**：发布成功时服务端只向发布者返回一次随机删除令牌，浏览器把它保存在 `localStorage`（键名 `fangyan-delete-tokens-v1`）。删除时必须带上该令牌，其他人即使能看到留言也无法删除。换设备、换浏览器或清理浏览器数据后，发布者也会失去删除令牌；此时只能由设置 `COMMUNITY_ADMIN_TOKEN` 的管理员删除。
 - **没有 Node 服务时**：自动回退到纯前端本地模式，留言、语音、点赞和回复保存在当前浏览器的 `localStorage`（键名 `fangyan-community-v1`）。
 - 语音支持本地上传或浏览器录音，单个文件限制约 1.5MB；浏览器不支持录音时会提示改用上传。
-- 换设备、换浏览器或清理浏览器数据后，本地模式留言会消失；服务端模式的数据保存在本机 `data/community.sqlite`，但仍没有账号、内容审核和隐私合规方案，**不能直接当作公开上线服务**。
+- 配置对象存储后，语音不再塞进数据库：页面先请求 `POST /api/uploads/sign` 拿到预签名 PUT 地址，直传成功后留言只保存对象键，播放地址由 `S3_PUBLIC_BASE_URL` 生成。未配置对象存储时自动回退到内联 data URI。
+- 换设备、换浏览器或清理浏览器数据后，本地模式留言会消失；服务端模式的数据保存在 SQLite 或 PostgreSQL 中，但仍没有账号、内容审核和隐私合规方案，**不能直接当作公开上线服务**。
 
 ## 人言乡音与录音说明
 

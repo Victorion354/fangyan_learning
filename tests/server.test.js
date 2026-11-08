@@ -151,7 +151,11 @@ before(async () => {
       POPULATION_FILE: path.join(root, 'data', 'population.json'),
       COMMUNITY_ADMIN_TOKEN: ADMIN_TOKEN,
       CLIENT_TOKEN_SECRET: CLIENT_TOKEN_SECRET,
-      ALLOWED_ORIGINS: 'http://allowed.example'
+      ALLOWED_ORIGINS: 'http://allowed.example',
+      DATABASE_URL: '',
+      DB_DRIVER: 'sqlite',
+      REDIS_URL: '',
+      S3_BUCKET: ''
     }),
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -185,6 +189,28 @@ test('健康检查返回服务状态与十个板块', async () => {
   assert.equal(data.boards.length, 10);
   assert.ok(data.boards.includes('guangzhou'));
   assert.ok(Number.isFinite(data.uptime));
+  assert.equal(data.features.store, 'sqlite');
+  assert.equal(data.features.redis, false);
+  assert.equal(data.features.objectStorage, false);
+  assert.equal(data.features.uploads, 'inline');
+});
+
+test('未配置对象存储时上传签名与 audioKey 返回 503', async () => {
+  const session = await createSession();
+
+  const sign = await jsonFetch('/api/uploads/sign', {
+    method: 'POST',
+    headers: { 'X-Client-Token': session.token },
+    body: { contentType: 'audio/webm', size: 1024 }
+  });
+  assert.equal(sign.status, 503);
+  assert.match(sign.data.error, /对象存储/);
+
+  const post = await createPost(session, {
+    audioKey: 'audio/' + session.clientId + '/test.webm'
+  });
+  assert.equal(post.status, 503);
+  assert.match(post.data.error, /对象存储/);
 });
 
 test('静态页面与共享数据可正常访问', async () => {

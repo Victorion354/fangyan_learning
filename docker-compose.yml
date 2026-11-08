@@ -1,0 +1,109 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "8787"
+      DATABASE_URL: postgres://fangyan:${POSTGRES_PASSWORD:-fangyan_dev_password}@postgres:5432/fangyan
+      REDIS_URL: redis://redis:6379
+      CLIENT_TOKEN_SECRET: ${CLIENT_TOKEN_SECRET:?请在 .env 中设置 CLIENT_TOKEN_SECRET}
+      COMMUNITY_ADMIN_TOKEN: ${COMMUNITY_ADMIN_TOKEN:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: fangyan-audio
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-fangyan}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-fangyan_dev_password}
+      S3_FORCE_PATH_STYLE: "true"
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/fangyan-audio}
+      PUBLIC_API_ORIGIN: ${PUBLIC_API_ORIGIN:-}
+      TRUST_PROXY: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fangyan
+      POSTGRES_USER: fangyan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fangyan_dev_password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fangyan -d fangyan"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-fangyan}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-fangyan_dev_password}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-fangyan}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-fangyan_dev_password}
+    volumes:
+      - ./deploy/minio-cors.json:/config/minio-cors.json:ro
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD; do sleep 2; done;
+      mc mb --ignore-existing local/fangyan-audio;
+      mc anonymous set download local/fangyan-audio;
+      mc cors set local/fangyan-audio /config/minio-cors.json || true;
+      "
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      S3_PUBLIC_ORIGIN: ${S3_PUBLIC_ORIGIN:-http://localhost:9000}
+      PUBLIC_API_ORIGIN: ${PUBLIC_API_ORIGIN:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - .:/srv:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  caddydata:
+  caddyconfig:

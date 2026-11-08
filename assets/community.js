@@ -4,9 +4,9 @@
   var CM_TOKEN_KEY='fangyan-delete-tokens-v1';
   var CM_SESSION_KEY='fangyan-session-v1';
   var CM_TYPES={dialect:'家乡话',suggest:'建议'};
-  var cmPosts=[],cmFilter='all',cmProvince='',cmReply=null,cmAudio=null,cmAudioName='';
+  var cmPosts=[],cmFilter='all',cmProvince='',cmReply=null,cmAudio=null,cmAudioName='',cmAudioFile=null;
   var cmRecording=null,cmStream=null,cmCurrent=null,cmInitialized=false;
-  var cmMode='local',cmEventSource=null,cmRefreshTimer=null,cmRetryTimer=null,cmClientId='',cmServerChecked=false,cmSession=null;
+  var cmMode='local',cmEventSource=null,cmRefreshTimer=null,cmRetryTimer=null,cmClientId='',cmServerChecked=false,cmSession=null,cmUploads=false;
 
   function cmEsc(s){
     return String(s==null?'':s).replace(/[&<>"']/g,function(c){
@@ -189,6 +189,7 @@
       .then(function(j){
         clearTimeout(timer);
         if(!j||j.ok!==true)throw new Error('bad health');
+        cmUploads=!!(j.features&&j.features.uploads==='presigned');
         return cmEnsureSession().then(function(){
           cmSetMode('server');
           clearTimeout(cmRetryTimer);
@@ -227,6 +228,31 @@
         cmRender(cmCurrent);
       }
       return j&&j.post;
+    });
+  }
+  function cmUploadAudio(file){
+    var type=file.type||'audio/webm';
+    return cmEnsureSession().then(function(){
+      return fetch(cmApi('/api/uploads/sign'),{
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Client-Token':cmSession.token},
+        body:JSON.stringify({contentType:type,size:file.size})
+      }).then(function(r){
+        return r.json().then(function(j){
+          if(!r.ok)throw new Error((j&&j.error)||('HTTP '+r.status));
+          return j;
+        });
+      }).then(function(sign){
+        if(!sign||!sign.uploadUrl||!sign.key)throw new Error('上传签名无效');
+        return fetch(sign.uploadUrl,{
+          method:sign.method||'PUT',
+          headers:sign.headers||{'Content-Type':type},
+          body:file
+        }).then(function(r){
+          if(!r.ok)throw new Error('语音上传失败（HTTP '+r.status+'）');
+          return sign.key;
+        });
+      });
     });
   }
   function cmLikeServer(p){
@@ -283,7 +309,7 @@
       var type=CM_TYPES[p.type]||'家乡话';
       var color=(cmBoardById(p.board)||{}).color||'#B07C2A';
       var canDelete=cmMode!=='server'||!!cmTokenFor(p.id);
-      var audio=(p.audio&&/^data:audio\//.test(p.audio))?'<audio class="cm-audio-player" controls preload="metadata" src="'+cmEsc(p.audio)+'"></audio>':'';
+      var audio=(p.audio&&/^(data:audio\/|https?:\/\/)/.test(p.audio))?'<audio class="cm-audio-player" controls preload="metadata" src="'+cmEsc(p.audio)+'"></audio>':'';
       return '<article class="cm-post" data-id="'+cmEsc(p.id)+'">'+
         '<div class="cm-post-head"><span class="cm-avatar" style="--hc:'+cmEsc(color)+'">'+cmEsc((p.name||'乡').slice(0,1))+'</span>'+
         '<div class="cm-who"><b>'+cmEsc(p.name||'匿名乡音')+'</b><span>'+cmEsc(p.province||'未填省份')+' · '+cmEsc(type)+(p.audio?' · 语音':'')+'</span></div>'+
@@ -324,15 +350,15 @@
     if(btn){btn.textContent='录制语音';btn.classList.remove('rec')}
   }
   function cmResetAudio(){
-    cmAudio=null;cmAudioName='';
+    cmAudio=null;cmAudioName='';cmAudioFile=null;
     var input=$('#cm-audio');if(input)input.value='';
     $('#cm-audio-name').textContent='未选择语音（可选，≤1.5MB）';
     $('#cm-audio-clear').hidden=true;
   }
-  function cmSetAudio(data,name){
+  function cmSetAudio(data,name,file){
     if(!/^data:audio\//.test(data)){toast('音频格式不支持');return}
     if(data.length>2400000){toast('语音太大，请控制在 1.5MB 以内');return}
-    cmAudio=data;cmAudioName=name||'语音';
+    cmAudio=data;cmAudioName=name||'语音';cmAudioFile=file||null;
     $('#cm-audio-name').textContent=cmAudioName;
     $('#cm-audio-clear').hidden=false;
   }
@@ -444,7 +470,7 @@
       if(!/^audio\//.test(file.type)){toast('请选择音频文件');this.value='';return}
       if(file.size>1.5*1024*1024){toast('语音文件请小于 1.5MB');this.value='';return}
       var reader=new FileReader();
-      reader.onload=function(){cmSetAudio(reader.result,file.name)};
+      reader.onload=function(){cmSetAudio(reader.result,file.name,file)};
       reader.onerror=function(){toast('读取音频失败')};
       reader.readAsDataURL(file);
     });
@@ -469,7 +495,7 @@
           if(!blob.size){toast('没有录到声音');return}
           if(blob.size>1.5*1024*1024){toast('录音太长，请控制在 1.5MB 以内');return}
           var reader=new FileReader();
-          reader.onload=function(){cmSetAudio(reader.result,'录音 '+new Date().toLocaleTimeString())};
+          reader.onload=function(){cmSetAudio(reader.result,'录音 '+new Date().toLocaleTimeString(),blob)};
           reader.onerror=function(){toast('读取录音失败')};
           reader.readAsDataURL(blob);
         };
@@ -505,7 +531,11 @@
       if(cmMode==='server'){
         if(submit){submit.disabled=true;submit.textContent='发布中…'}
         $('#cm-status').textContent='';
-        cmPostServer(post).then(function(saved){
+        var upload=(cmAudioFile&&cmUploads)?cmUploadAudio(cmAudioFile):Promise.resolve(null);
+        upload.then(function(audioKey){
+          if(audioKey){post.audio=null;post.audioKey=audioKey;}
+          return cmPostServer(post);
+        }).then(function(saved){
           if(!saved)throw new Error('发布失败');
           done();
           toast('已发布到实时社区');
