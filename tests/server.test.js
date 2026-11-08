@@ -7,16 +7,20 @@ const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const http = require('node:http');
+const crypto = require('node:crypto');
+const { DatabaseSync } = require('node:sqlite');
 const { spawn } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const ADMIN_TOKEN = 'test-admin-token-20261107';
+const CLIENT_TOKEN_SECRET = 'test-client-token-secret-20261107';
 
 let child = null;
 let port = 0;
 let base = '';
 let tempDir = '';
 let communityFile = '';
+let communityDb = '';
 let childOutput = '';
 let childError = '';
 let childExitCode = null;
@@ -99,10 +103,18 @@ function rawRequest(pathname, method = 'GET', extraHeaders = {}) {
   });
 }
 
-function createPost(clientId, overrides = {}) {
+async function createSession(existingToken) {
+  const headers = {};
+  if (existingToken) headers['X-Client-Token'] = existingToken;
+  const { status, data } = await jsonFetch('/api/session', { method: 'POST', headers });
+  assert.equal(status, 200, '会话接口应返回 200');
+  return data;
+}
+
+function createPost(session, overrides = {}) {
   return jsonFetch('/api/community', {
     method: 'POST',
-    headers: { 'X-Client-Id': clientId },
+    headers: { 'X-Client-Token': session.token },
     body: Object.assign({
       board: 'guangzhou',
       province: '广东省',
@@ -113,11 +125,21 @@ function createPost(clientId, overrides = {}) {
   });
 }
 
+function signToken(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', CLIENT_TOKEN_SECRET)
+    .update('v1.' + body)
+    .digest('base64url');
+  return 'v1.' + body + '.' + signature;
+}
+
 before(async () => {
   port = await freePort();
   base = 'http://127.0.0.1:' + port;
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fangyan-test-'));
   communityFile = path.join(tempDir, 'community.json');
+  communityDb = path.join(tempDir, 'community.sqlite');
 
   child = spawn(process.execPath, ['server.js'], {
     cwd: root,
@@ -125,8 +147,10 @@ before(async () => {
       PORT: String(port),
       HOST: '127.0.0.1',
       COMMUNITY_FILE: communityFile,
+      COMMUNITY_DB: communityDb,
       POPULATION_FILE: path.join(root, 'data', 'population.json'),
       COMMUNITY_ADMIN_TOKEN: ADMIN_TOKEN,
+      CLIENT_TOKEN_SECRET: CLIENT_TOKEN_SECRET,
       ALLOWED_ORIGINS: 'http://allowed.example'
     }),
     stdio: ['ignore', 'pipe', 'pipe']
@@ -332,6 +356,8 @@ test('CORS 仅允许同源与白名单来源', async () => {
   const allowedHeaders = allowed.headers.get('access-control-allow-headers') || '';
   assert.match(allowedHeaders, /X-Delete-Token/i);
   assert.match(allowedHeaders, /X-Admin-Token/i);
+  assert.match(allowedHeaders, /X-Client-Token/i);
+  assert.match(allowedHeaders, /Authorization/i);
   assert.match(allowed.headers.get('access-control-allow-methods') || '', /DELETE/);
 
   const blockedPreflight = await jsonFetch('/api/community', {
@@ -357,7 +383,86 @@ test('CORS 仅允许同源与白名单来源', async () => {
   assert.equal(nullOrigin.headers.get('access-control-allow-origin'), null);
 });
 
-test('发布留言需要客户端标识', async () => {
+test('匿名会话接口签发可验证令牌', async () => {
+  const session = await createSession();
+  assert.match(session.token, /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+  assert.match(session.clientId, /^[A-Za-z0-9_-]{6,64}$/);
+  assert.ok(Number(session.expiresAt) > Date.now(), '会话应有未来过期时间');
+
+  const refreshed = await createSession(session.token);
+  assert.equal(refreshed.clientId, session.clientId, '刷新会话应保留同一客户端 ID');
+  assert.ok(Number(refreshed.expiresAt) > Date.now());
+
+  const read = await jsonFetch('/api/community', {
+    headers: { Authorization: 'Bearer ' + session.token }
+  });
+  assert.equal(read.status, 200);
+});
+
+test('写入需要会话令牌，读取兼容 X-Client-Id', async () => {
+  const session = await createSession();
+  const created = await createPost(session, { text: '会话写入测试' });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.post.mine, true);
+
+  const legacyRead = await jsonFetch('/api/community', {
+    headers: { 'X-Client-Id': session.clientId }
+  });
+  assert.equal(legacyRead.status, 200);
+  const found = legacyRead.data.posts.find((p) => p.id === created.data.post.id);
+  assert.ok(found);
+  assert.equal(found.mine, true, '读取仍可用 X-Client-Id 识别本人留言');
+
+  const legacyWrite = await jsonFetch('/api/community', {
+    method: 'POST',
+    headers: { 'X-Client-Id': session.clientId },
+    body: { board: 'guangzhou', text: '旧版标识不应能写入' }
+  });
+  assert.equal(legacyWrite.status, 401);
+  assert.match(legacyWrite.data.error, /会话令牌/);
+
+  const bearerWrite = await jsonFetch('/api/community', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + session.token },
+    body: { board: 'guangzhou', text: 'Bearer 令牌写入' }
+  });
+  assert.equal(bearerWrite.status, 201);
+
+  for (const id of [created.data.post.id, bearerWrite.data.post.id]) {
+    const removed = await jsonFetch('/api/community/' + id, {
+      method: 'DELETE',
+      headers: { 'X-Admin-Token': ADMIN_TOKEN }
+    });
+    assert.equal(removed.status, 200);
+  }
+});
+
+test('篡改或过期的会话令牌会被拒绝', async () => {
+  const session = await createSession();
+  const tampered = session.token.slice(0, -1) + (session.token.endsWith('A') ? 'B' : 'A');
+  const tamperedRes = await jsonFetch('/api/community', {
+    method: 'POST',
+    headers: { 'X-Client-Token': tampered },
+    body: { board: 'guangzhou', text: '篡改令牌不应写入' }
+  });
+  assert.equal(tamperedRes.status, 401);
+  assert.match(tamperedRes.data.error, /无效或已过期/);
+
+  const expired = signToken({
+    cid: 'cexpired000000000000',
+    iat: Date.now() - 7200000,
+    exp: Date.now() - 3600000
+  });
+  const expiredRes = await jsonFetch('/api/community', {
+    method: 'POST',
+    headers: { 'X-Client-Token': expired },
+    body: { board: 'guangzhou', text: '过期令牌不应写入' }
+  });
+  assert.equal(expiredRes.status, 401);
+  assert.match(expiredRes.data.error, /无效或已过期/);
+});
+
+test('发布留言需要匿名会话令牌', async () => {
   const { status, data } = await jsonFetch('/api/community', {
     method: 'POST',
     body: {
@@ -368,13 +473,13 @@ test('发布留言需要客户端标识', async () => {
       text: '这条留言不应被创建'
     }
   });
-  assert.equal(status, 400);
-  assert.match(data.error, /客户端标识/);
+  assert.equal(status, 401);
+  assert.match(data.error, /会话令牌/);
 });
 
 test('发布留言返回一次性删除令牌且不泄漏哈希', async () => {
-  const client = 'client-create-aaaaaa';
-  const { status, data } = await createPost(client, { text: '发布令牌测试' });
+  const session = await createSession();
+  const { status, data } = await createPost(session, { text: '发布令牌测试' });
   assert.equal(status, 201);
   assert.ok(data.post);
   assert.match(data.post.id, /^p[A-Za-z0-9]+$/);
@@ -385,8 +490,9 @@ test('发布留言返回一次性删除令牌且不泄漏哈希', async () => {
   assert.equal('deleteTokenHash' in data.post, false);
   assert.equal('ownerId' in data.post, false);
 
+  const other = await createSession();
   const listForOther = await jsonFetch('/api/community', {
-    headers: { 'X-Client-Id': 'client-other-bbbbbb' }
+    headers: { 'X-Client-Token': other.token }
   });
   assert.equal(listForOther.status, 200);
   const found = listForOther.data.posts.find((p) => p.id === data.post.id);
@@ -394,43 +500,48 @@ test('发布留言返回一次性删除令牌且不泄漏哈希', async () => {
   assert.equal(found.mine, false);
   assert.equal('deleteTokenHash' in found, false);
 
-  const stored = JSON.parse(fs.readFileSync(communityFile, 'utf8'));
-  const storedPost = stored.find((p) => p.id === data.post.id);
-  assert.ok(storedPost);
-  assert.match(storedPost.deleteTokenHash, /^[a-f0-9]{64}$/);
-  assert.equal(JSON.stringify(stored).includes(data.deleteToken), false, '社区文件不应保存明文删除令牌');
+  const db = new DatabaseSync(communityDb, { readOnly: true });
+  try {
+    const storedPost = db.prepare('SELECT * FROM posts WHERE id = ?').get(data.post.id);
+    assert.ok(storedPost);
+    assert.match(storedPost.delete_token_hash, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(storedPost).includes(data.deleteToken), false, '数据库不应保存明文删除令牌');
+    const likeCount = db.prepare('SELECT COUNT(*) AS count FROM post_likes WHERE post_id = ?').get(data.post.id);
+    assert.equal(likeCount.count, 0);
+  } finally {
+    db.close();
+  }
 
   // 清理，供后续用例从空列表开始
   const removed = await jsonFetch('/api/community/' + data.post.id, {
     method: 'DELETE',
-    headers: { 'X-Client-Id': client, 'X-Delete-Token': data.deleteToken }
+    headers: { 'X-Delete-Token': data.deleteToken }
   });
   assert.equal(removed.status, 200);
 });
 
 test('删除留言需要发布令牌', async () => {
-  const client = 'client-delete-cccccc';
-  const created = await createPost(client, { text: '删除鉴权测试' });
+  const session = await createSession();
+  const created = await createPost(session, { text: '删除鉴权测试' });
   assert.equal(created.status, 201);
   const id = created.data.post.id;
   const token = created.data.deleteToken;
 
   const noToken = await jsonFetch('/api/community/' + id, {
-    method: 'DELETE',
-    headers: { 'X-Client-Id': client }
+    method: 'DELETE'
   });
   assert.equal(noToken.status, 403);
   assert.match(noToken.data.error, /删除权限/);
 
   const wrongToken = await jsonFetch('/api/community/' + id, {
     method: 'DELETE',
-    headers: { 'X-Client-Id': client, 'X-Delete-Token': 'deadbeef' }
+    headers: { 'X-Delete-Token': 'deadbeef' }
   });
   assert.equal(wrongToken.status, 403);
 
   const correct = await jsonFetch('/api/community/' + id, {
     method: 'DELETE',
-    headers: { 'X-Client-Id': client, 'X-Delete-Token': token }
+    headers: { 'X-Delete-Token': token }
   });
   assert.equal(correct.status, 200);
   assert.deepEqual(correct.data, { ok: true, id });
@@ -443,7 +554,8 @@ test('删除留言需要发布令牌', async () => {
 });
 
 test('管理员令牌可以删除任意留言', async () => {
-  const created = await createPost('client-admin-dddddd', { text: '管理员删除测试' });
+  const session = await createSession();
+  const created = await createPost(session, { text: '管理员删除测试' });
   assert.equal(created.status, 201);
   const id = created.data.post.id;
 
@@ -462,13 +574,15 @@ test('管理员令牌可以删除任意留言', async () => {
 });
 
 test('点赞按客户端去重并返回最新计数', async () => {
-  const created = await createPost('client-like-eeeeee', { text: '点赞测试' });
+  const author = await createSession();
+  const created = await createPost(author, { text: '点赞测试' });
   assert.equal(created.status, 201);
   const id = created.data.post.id;
+  const liker = await createSession();
 
   const liked = await jsonFetch('/api/community/' + id + '/like', {
     method: 'POST',
-    headers: { 'X-Client-Id': 'client-like-ffffff' },
+    headers: { 'X-Client-Token': liker.token },
     body: { liked: true }
   });
   assert.equal(liked.status, 200);
@@ -477,14 +591,14 @@ test('点赞按客户端去重并返回最新计数', async () => {
 
   const again = await jsonFetch('/api/community/' + id + '/like', {
     method: 'POST',
-    headers: { 'X-Client-Id': 'client-like-ffffff' },
+    headers: { 'X-Client-Token': liker.token },
     body: { liked: true }
   });
   assert.equal(again.data.post.likes, 1);
 
   const unliked = await jsonFetch('/api/community/' + id + '/like', {
     method: 'POST',
-    headers: { 'X-Client-Id': 'client-like-ffffff' },
+    headers: { 'X-Client-Token': liker.token },
     body: { liked: false }
   });
   assert.equal(unliked.data.post.likes, 0);
@@ -498,27 +612,28 @@ test('点赞按客户端去重并返回最新计数', async () => {
 });
 
 test('非法板块、空内容与错误 JSON 被拒绝', async () => {
-  const badBoard = await createPost('client-invalid-gggggg', { board: 'not-a-board' });
+  const session = await createSession();
+  const badBoard = await createPost(session, { board: 'not-a-board' });
   assert.equal(badBoard.status, 400);
 
-  const emptyText = await createPost('client-invalid-gggggg', { text: '   ' });
+  const emptyText = await createPost(session, { text: '   ' });
   assert.equal(emptyText.status, 400);
 
   const badJson = await jsonFetch('/api/community', {
     method: 'POST',
-    headers: { 'X-Client-Id': 'client-invalid-gggggg' },
+    headers: { 'X-Client-Token': session.token },
     rawBody: '{not json'
   });
   assert.equal(badJson.status, 400);
 
-  const badAudio = await createPost('client-invalid-gggggg', { audio: 'data:text/plain;base64,AAAA' });
+  const badAudio = await createPost(session, { audio: 'data:text/plain;base64,AAAA' });
   assert.equal(badAudio.status, 400);
 
   const missingClient = await jsonFetch('/api/community/none/like', {
     method: 'POST',
     body: { liked: true }
   });
-  assert.equal(missingClient.status, 400);
+  assert.equal(missingClient.status, 401);
 });
 
 test('人口接口返回公开统计与校验时间', async () => {
@@ -558,10 +673,11 @@ test('未知接口返回 404 JSON', async () => {
 });
 
 test('发布接口触发限流并返回 Retry-After', async () => {
+  const session = await createSession();
   const created = [];
   let limited = null;
   for (let i = 0; i < 30; i += 1) {
-    const res = await createPost('client-rate-hhhhhh', { text: '限流测试 ' + i });
+    const res = await createPost(session, { text: '限流测试 ' + i });
     if (res.status === 429) {
       limited = res;
       break;
@@ -582,8 +698,12 @@ test('发布接口触发限流并返回 Retry-After', async () => {
   }
 });
 
-test('测试结束后社区文件为空数组', () => {
-  const stored = JSON.parse(fs.readFileSync(communityFile, 'utf8'));
-  assert.ok(Array.isArray(stored));
-  assert.equal(stored.length, 0);
+test('测试结束后社区数据库为空', () => {
+  const db = new DatabaseSync(communityDb, { readOnly: true });
+  try {
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM posts').get().count, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM post_likes').get().count, 0);
+  } finally {
+    db.close();
+  }
 });

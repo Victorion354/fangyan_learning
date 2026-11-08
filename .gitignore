@@ -1,6 +1,8 @@
 # 本地运行时数据（含用户留言与语音，不应提交）
 data/community.json
 data/community.json.corrupt-*
+data/community.sqlite
+data/community.sqlite-*
 data/*.tmp-*
 
 # 开发备份与验证截图

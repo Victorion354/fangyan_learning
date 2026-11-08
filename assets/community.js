@@ -2,10 +2,11 @@
 (function(){
   var CM_KEY='fangyan-community-v1';
   var CM_TOKEN_KEY='fangyan-delete-tokens-v1';
+  var CM_SESSION_KEY='fangyan-session-v1';
   var CM_TYPES={dialect:'家乡话',suggest:'建议'};
   var cmPosts=[],cmFilter='all',cmProvince='',cmReply=null,cmAudio=null,cmAudioName='';
   var cmRecording=null,cmStream=null,cmCurrent=null,cmInitialized=false;
-  var cmMode='local',cmEventSource=null,cmRefreshTimer=null,cmRetryTimer=null,cmClientId='',cmServerChecked=false;
+  var cmMode='local',cmEventSource=null,cmRefreshTimer=null,cmRetryTimer=null,cmClientId='',cmServerChecked=false,cmSession=null;
 
   function cmEsc(s){
     return String(s==null?'':s).replace(/[&<>"']/g,function(c){
@@ -39,6 +40,56 @@
       }
       return id;
     }catch(e){return 'c'+Math.random().toString(36).slice(2,12)}
+  }
+  function cmSessionValid(session){
+    return !!(session&&typeof session.token==='string'&&typeof session.clientId==='string'&&
+      /^[A-Za-z0-9_-]{6,64}$/.test(session.clientId)&&Number(session.expiresAt)>Date.now()+60000);
+  }
+  function cmLoadSession(){
+    try{
+      var raw=localStorage.getItem(CM_SESSION_KEY);
+      var obj=raw?JSON.parse(raw):null;
+      return cmSessionValid(obj)?obj:null;
+    }catch(e){return null}
+  }
+  function cmSaveSession(session){
+    try{localStorage.setItem(CM_SESSION_KEY,JSON.stringify(session))}catch(e){}
+  }
+  function cmClearSession(){
+    cmSession=null;
+    try{localStorage.removeItem(CM_SESSION_KEY)}catch(e){}
+  }
+  function cmRequestSession(){
+    var headers={'Content-Type':'application/json'};
+    if(cmSession&&cmSession.token)headers['X-Client-Token']=cmSession.token;
+    return fetch(cmApi('/api/session'),{method:'POST',headers:headers,cache:'no-store'})
+      .then(function(r){
+        return r.json().then(function(j){if(!r.ok)throw new Error((j&&j.error)||('HTTP '+r.status));return j});
+      })
+      .then(function(j){
+        if(!j||typeof j.token!=='string'||typeof j.clientId!=='string')throw new Error('会话响应无效');
+        cmSession={token:j.token,clientId:j.clientId,expiresAt:Number(j.expiresAt)||0};
+        cmSaveSession(cmSession);
+        cmClientId=cmSession.clientId;
+        return cmSession;
+      });
+  }
+  function cmEnsureSession(force){
+    if(!cmSession)cmSession=cmLoadSession();
+    if(!force&&cmSessionValid(cmSession))return Promise.resolve(cmSession);
+    return cmRequestSession();
+  }
+  function cmWrite(path,init,retried){
+    return cmEnsureSession().then(function(){
+      var headers=Object.assign({},init.headers||{},{'X-Client-Token':cmSession.token});
+      return fetch(cmApi(path),Object.assign({},init,{headers:headers,cache:'no-store'}));
+    }).then(function(r){
+      if(r.status===401&&!retried){
+        cmClearSession();
+        return cmWrite(path,init,true);
+      }
+      return r.json().then(function(j){if(!r.ok)throw new Error((j&&j.error)||('HTTP '+r.status));return j});
+    });
   }
   function cmLoadTokens(){
     try{
@@ -118,7 +169,8 @@
       cmRender(cmCurrent);
       return Promise.resolve(false);
     }
-    return fetch(cmApi('/api/community'),{cache:'no-store',headers:{'X-Client-Id':cmClientId}})
+    var headers=cmSessionValid(cmSession)?{'X-Client-Token':cmSession.token}:{'X-Client-Id':cmClientId};
+    return fetch(cmApi('/api/community'),{cache:'no-store',headers:headers})
       .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
       .then(function(j){
         if(j&&Array.isArray(j.posts))cmPosts=j.posts;
@@ -137,19 +189,21 @@
       .then(function(j){
         clearTimeout(timer);
         if(!j||j.ok!==true)throw new Error('bad health');
-        cmSetMode('server');
-        clearTimeout(cmRetryTimer);
-        return cmRefreshPosts().then(function(){
-          if(cmEventSource)return;
-          try{
-            cmEventSource=new EventSource(cmApi('/api/community/stream')+'?clientId='+encodeURIComponent(cmClientId));
-            cmEventSource.addEventListener('refresh',cmScheduleRefresh);
-            cmEventSource.onopen=function(){cmSetMode('server')};
-            cmEventSource.onerror=function(){
-              var text=$('#cm-conn-text');
-              if(text)text.textContent='实时连接中断，正在自动重连…';
-            };
-          }catch(e){}
+        return cmEnsureSession().then(function(){
+          cmSetMode('server');
+          clearTimeout(cmRetryTimer);
+          return cmRefreshPosts().then(function(){
+            if(cmEventSource)return;
+            try{
+              cmEventSource=new EventSource(cmApi('/api/community/stream')+'?clientId='+encodeURIComponent(cmClientId));
+              cmEventSource.addEventListener('refresh',cmScheduleRefresh);
+              cmEventSource.onopen=function(){cmSetMode('server')};
+              cmEventSource.onerror=function(){
+                var text=$('#cm-conn-text');
+                if(text)text.textContent='实时连接中断，正在自动重连…';
+              };
+            }catch(e){}
+          });
         });
       })
       .catch(function(){
@@ -162,12 +216,10 @@
       });
   }
   function cmPostServer(post){
-    return fetch(cmApi('/api/community'),{
+    return cmWrite('/api/community',{
       method:'POST',
-      headers:{'Content-Type':'application/json','X-Client-Id':cmClientId},
+      headers:{'Content-Type':'application/json'},
       body:JSON.stringify(post)
-    }).then(function(r){
-      return r.json().then(function(j){if(!r.ok)throw new Error((j&&j.error)||('HTTP '+r.status));return j});
     }).then(function(j){
       if(j&&j.post){
         cmPosts.unshift(j.post);
@@ -179,12 +231,10 @@
   }
   function cmLikeServer(p){
     var liked=!p.liked;
-    return fetch(cmApi('/api/community/'+encodeURIComponent(p.id)+'/like'),{
+    return cmWrite('/api/community/'+encodeURIComponent(p.id)+'/like',{
       method:'POST',
-      headers:{'Content-Type':'application/json','X-Client-Id':cmClientId},
+      headers:{'Content-Type':'application/json'},
       body:JSON.stringify({liked:liked})
-    }).then(function(r){
-      return r.json().then(function(j){if(!r.ok)throw new Error((j&&j.error)||('HTTP '+r.status));return j});
     }).then(function(j){
       if(j&&j.post){
         for(var i=0;i<cmPosts.length;i++)if(cmPosts[i].id===j.post.id)cmPosts[i]=j.post;
@@ -193,9 +243,11 @@
     });
   }
   function cmDeleteServer(id){
+    var headers={'X-Delete-Token':cmTokenFor(id)};
+    if(cmSession&&cmSession.token)headers['X-Client-Token']=cmSession.token;
     return fetch(cmApi('/api/community/'+encodeURIComponent(id)),{
       method:'DELETE',
-      headers:{'X-Client-Id':cmClientId,'X-Delete-Token':cmTokenFor(id)}
+      headers:headers
     }).then(function(r){
       return r.json().then(function(j){if(!r.ok)throw new Error((j&&j.error)||('HTTP '+r.status));return j});
     }).then(function(){
@@ -313,6 +365,8 @@
     if(!boards.length)return;
     cmCurrent=boards[0];
     cmClientId=cmClient();
+    cmSession=cmLoadSession();
+    if(cmSession)cmClientId=cmSession.clientId;
     cmPosts=cmLoad();
     if(cmInitialized){cmRender(cmCurrent);return}
     cmInitialized=true;

@@ -65,9 +65,11 @@ if (detailJs.includes('var DET={')) fail('详情页脚本仍保留旧 DET 数据
 if (community.includes('CM_PROVINCES')) fail('社区仍保留重复的 CM_PROVINCES');
 if (!community.includes('FANGYAN_DATA')) fail('社区没有读取共享数据');
 if (!server.includes("require('./assets/data/dialects.js')")) fail('服务端没有读取共享数据');
+if (!server.includes("require('./lib/community-store.js')")) fail('服务端没有使用 SQLite 数据层');
+if (!read('lib/community-store.js').includes("require('node:sqlite')")) fail('数据层没有使用 node:sqlite');
 
 /* 3. 脚本语法 */
-const scriptFiles = new Set(['server.js']);
+const scriptFiles = new Set(['server.js', 'lib/community-store.js']);
 for (const html of [index, main, detail]) {
   const re = /<script[^>]+src="(assets\/[^"?#]+\.js)(?:[?#][^"]*)?"/g;
   let match;

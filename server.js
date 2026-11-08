@@ -12,6 +12,8 @@
  *
  * 环境变量：
  *   PORT=8787 HOST=0.0.0.0 node server.js
+ *   CLIENT_TOKEN_SECRET=随机长字符串  # 不设置时每个进程随机生成
+ *   CLIENT_TOKEN_TTL_MS=86400000      # 匿名会话有效期，默认 24 小时
  */
 
 'use strict';
@@ -22,10 +24,12 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const FANGYAN_DATA = require('./assets/data/dialects.js');
+const { CommunityStore } = require('./lib/community-store.js');
 
 const ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
 const COMMUNITY_FILE = process.env.COMMUNITY_FILE ? path.resolve(process.env.COMMUNITY_FILE) : path.join(DATA_DIR, 'community.json');
+const COMMUNITY_DB = process.env.COMMUNITY_DB ? path.resolve(process.env.COMMUNITY_DB) : path.join(DATA_DIR, 'community.sqlite');
 const POPULATION_FILE = process.env.POPULATION_FILE ? path.resolve(process.env.POPULATION_FILE) : path.join(DATA_DIR, 'population.json');
 const PORT = Number(process.env.PORT) || 8787;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -39,6 +43,13 @@ const ALLOWED_ORIGINS = new Set(
     .map((item) => item.trim().replace(/\/+$/, ''))
     .filter(Boolean)
 );
+const CLIENT_TOKEN_SECRET =
+  (process.env.CLIENT_TOKEN_SECRET || '').trim() || crypto.randomBytes(32).toString('hex');
+const CLIENT_TOKEN_TTL_MS = (() => {
+  const value = Number(process.env.CLIENT_TOKEN_TTL_MS);
+  if (!Number.isFinite(value) || value < 60000) return 24 * 60 * 60 * 1000;
+  return Math.min(value, 30 * 24 * 60 * 60 * 1000);
+})();
 
 const BOARDS = new Set(FANGYAN_DATA.dialects.map((d) => d.id));
 const TYPES = new Set(['dialect', 'suggest']);
@@ -86,7 +97,6 @@ function gzipBuffer(key, buffer) {
   return out;
 }
 
-let posts = loadCommunity();
 const sseClients = new Set();
 const rateBuckets = new Map();
 
@@ -103,13 +113,6 @@ function readJson(file, fallback) {
     if (err.code === 'ENOENT') return fallback;
     throw err;
   }
-}
-
-function writeJsonAtomic(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = file + '.tmp-' + process.pid + '-' + Date.now();
-  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', 'utf8');
-  fs.renameSync(tmp, file);
 }
 
 function clean(value, max) {
@@ -140,6 +143,58 @@ function adminMatches(token) {
   const a = Buffer.from(token);
   const b = Buffer.from(ADMIN_TOKEN);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function base64url(value) {
+  return Buffer.from(value).toString('base64url');
+}
+
+function signClientToken(clientId, expiresAt) {
+  const payload = base64url(JSON.stringify({
+    cid: clientId,
+    iat: Date.now(),
+    exp: expiresAt
+  }));
+  const signature = crypto
+    .createHmac('sha256', CLIENT_TOKEN_SECRET)
+    .update('v1.' + payload)
+    .digest('base64url');
+  return 'v1.' + payload + '.' + signature;
+}
+
+function verifyClientToken(token) {
+  if (typeof token !== 'string' || token.length > 1024) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== 'v1') return null;
+  const expected = crypto
+    .createHmac('sha256', CLIENT_TOKEN_SECRET)
+    .update('v1.' + parts[1])
+    .digest('base64url');
+  const actual = Buffer.from(parts[2]);
+  const wanted = Buffer.from(expected);
+  if (actual.length !== wanted.length || !crypto.timingSafeEqual(actual, wanted)) return null;
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch (_) {
+    return null;
+  }
+  if (!payload || typeof payload.cid !== 'string') return null;
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(payload.cid)) return null;
+  if (!Number.isFinite(payload.exp) || payload.exp <= Date.now()) return null;
+  return payload;
+}
+
+function clientTokenFrom(req) {
+  const header = String(req.headers['x-client-token'] || '').trim();
+  if (header) return header;
+  const auth = String(req.headers.authorization || '').trim();
+  const match = /^Bearer\s+(.+)$/i.exec(auth);
+  return match ? match[1].trim() : '';
+}
+
+function newClientId() {
+  return 'c' + crypto.randomBytes(16).toString('hex');
 }
 
 function normalizeStoredPost(raw) {
@@ -175,10 +230,7 @@ function loadCommunity() {
     if (!Array.isArray(raw)) throw new Error('community.json 不是数组');
     return raw.map(normalizeStoredPost).filter(Boolean).slice(-MAX_POSTS);
   } catch (err) {
-    if (err.code === 'ENOENT') {
-      writeJsonAtomic(COMMUNITY_FILE, []);
-      return [];
-    }
+    if (err.code === 'ENOENT') return [];
     const backup = COMMUNITY_FILE + '.corrupt-' + Date.now();
     try { fs.renameSync(COMMUNITY_FILE, backup); } catch (_) {}
     console.warn('community.json 读取失败，已备份到 ' + backup + '：' + err.message);
@@ -186,12 +238,12 @@ function loadCommunity() {
   }
 }
 
-function saveCommunity() {
-  writeJsonAtomic(COMMUNITY_FILE, posts);
-}
+const store = new CommunityStore({ dbFile: COMMUNITY_DB, maxPosts: MAX_POSTS });
+const imported = store.importLegacy(loadCommunity());
+if (imported > 0) console.log('已从 community.json 导入 ' + imported + ' 条留言到 SQLite');
 
 function publicPost(post, clientId) {
-  const likedBy = Array.isArray(post.likedBy) ? post.likedBy : [];
+  if (!post) return null;
   return {
     id: post.id,
     board: post.board,
@@ -201,8 +253,8 @@ function publicPost(post, clientId) {
     text: post.text,
     audio: post.audio,
     audioName: post.audioName,
-    likes: likedBy.length || Math.max(0, Number(post.likes) || 0),
-    liked: clientId ? likedBy.includes(clientId) : false,
+    likes: Math.max(0, Number(post.likes) || 0),
+    liked: !!post.liked,
     mine: !!(clientId && post.ownerId === clientId),
     createdAt: post.createdAt,
     replyTo: post.replyTo
@@ -212,6 +264,20 @@ function publicPost(post, clientId) {
 function clientIdFrom(req, url) {
   const raw = (req.headers['x-client-id'] || url.searchParams.get('clientId') || '').trim();
   return /^[A-Za-z0-9_-]{6,64}$/.test(raw) ? raw : null;
+}
+
+function viewerIdFrom(req, url) {
+  const payload = verifyClientToken(clientTokenFrom(req));
+  if (payload) return payload.cid;
+  return clientIdFrom(req, url);
+}
+
+function requireClientId(req) {
+  const token = clientTokenFrom(req);
+  if (!token) throw httpError(401, '需要匿名会话令牌，请先请求 /api/session');
+  const payload = verifyClientToken(token);
+  if (!payload) throw httpError(401, '匿名会话令牌无效或已过期');
+  return payload.cid;
 }
 
 function normalizeNewPost(input, clientId) {
@@ -360,7 +426,7 @@ function setCors(req, res) {
   if (!origin) return null;
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Client-Id, X-Delete-Token, X-Admin-Token');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Client-Id, X-Client-Token, X-Delete-Token, X-Admin-Token');
   res.setHeader('Access-Control-Max-Age', '86400');
   addVary(res, 'Origin');
   return origin;
@@ -395,7 +461,7 @@ function sseSend(res, event, data) {
 }
 
 function broadcastRefresh() {
-  const payload = { at: Date.now(), count: posts.length };
+  const payload = { at: Date.now(), count: store.count() };
   for (const client of sseClients) sseSend(client, 'refresh', payload);
 }
 
@@ -407,7 +473,7 @@ function openStream(req, res, url) {
     'X-Accel-Buffering': 'no'
   });
   res.write('retry: 3000\n\n');
-  sseSend(res, 'hello', { time: Date.now(), count: posts.length });
+  sseSend(res, 'hello', { time: Date.now(), count: store.count() });
   sseClients.add(res);
   const heartbeat = setInterval(() => {
     try { res.write(': ping\n\n'); } catch (_) {}
@@ -436,11 +502,24 @@ function loadPopulation() {
 async function handleApi(req, res, url) {
   const pathname = url.pathname;
   const method = req.method || 'GET';
-  const clientId = clientIdFrom(req, url);
+  const clientId = viewerIdFrom(req, url);
 
   if (method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  if (pathname === '/api/session' && method === 'POST') {
+    rateLimit(req, 'session', 60, 60000);
+    const existing = verifyClientToken(clientTokenFrom(req));
+    const sessionClientId = existing ? existing.cid : newClientId();
+    const expiresAt = Date.now() + CLIENT_TOKEN_TTL_MS;
+    sendJson(res, 200, {
+      token: signClientToken(sessionClientId, expiresAt),
+      clientId: sessionClientId,
+      expiresAt: expiresAt
+    });
     return;
   }
 
@@ -449,7 +528,7 @@ async function handleApi(req, res, url) {
       ok: true,
       mode: 'server',
       boards: Array.from(BOARDS),
-      posts: posts.length,
+      posts: store.count(),
       uptime: Math.round(process.uptime()),
       time: new Date().toISOString()
     });
@@ -458,9 +537,9 @@ async function handleApi(req, res, url) {
 
   if (pathname === '/api/community' && method === 'GET') {
     const board = url.searchParams.get('board');
-    const list = board && BOARDS.has(board) ? posts.filter((p) => p.board === board) : posts;
+    const list = store.list(board && BOARDS.has(board) ? board : null, clientId);
     sendJson(res, 200, {
-      posts: list.slice().sort((a, b) => b.createdAt - a.createdAt).map((p) => publicPost(p, clientId)),
+      posts: list.map((p) => publicPost(p, clientId)),
       serverTime: Date.now()
     });
     return;
@@ -473,49 +552,39 @@ async function handleApi(req, res, url) {
 
   if (pathname === '/api/community' && method === 'POST') {
     rateLimit(req, 'post', 20, 60000);
-    if (!clientId) throw httpError(400, '缺少客户端标识');
+    const authorId = requireClientId(req);
     const body = await readBody(req);
-    const post = normalizeNewPost(body, clientId);
+    const post = normalizeNewPost(body, authorId);
     const deleteToken = crypto.randomBytes(24).toString('hex');
     post.deleteTokenHash = hashToken(deleteToken);
-    posts.push(post);
-    if (posts.length > MAX_POSTS) posts = posts.slice(-MAX_POSTS);
-    saveCommunity();
+    const saved = store.create(post);
     broadcastRefresh();
-    sendJson(res, 201, { post: publicPost(post, clientId), deleteToken });
+    sendJson(res, 201, { post: publicPost(saved, authorId), deleteToken });
     return;
   }
 
   const likeMatch = pathname.match(/^\/api\/community\/([A-Za-z0-9_-]{1,64})\/like$/);
   if (likeMatch && method === 'POST') {
     rateLimit(req, 'like', 120, 60000);
-    if (!clientId) throw httpError(400, '缺少客户端标识');
+    const likerId = requireClientId(req);
     const body = await readBody(req);
-    const post = posts.find((p) => p.id === likeMatch[1]);
+    const post = store.setLike(likeMatch[1], likerId, body.liked === true);
     if (!post) throw httpError(404, '留言不存在');
-    const liked = body.liked === true;
-    const set = new Set(Array.isArray(post.likedBy) ? post.likedBy : []);
-    if (liked) set.add(clientId);
-    else set.delete(clientId);
-    post.likedBy = Array.from(set);
-    post.likes = post.likedBy.length;
-    saveCommunity();
     broadcastRefresh();
-    sendJson(res, 200, { post: publicPost(post, clientId) });
+    sendJson(res, 200, { post: publicPost(post, likerId) });
     return;
   }
 
   const deleteMatch = pathname.match(/^\/api\/community\/([A-Za-z0-9_-]{1,64})$/);
   if (deleteMatch && method === 'DELETE') {
     rateLimit(req, 'delete', 30, 60000);
-    const index = posts.findIndex((p) => p.id === deleteMatch[1]);
-    if (index < 0) throw httpError(404, '留言不存在');
+    const post = store.get(deleteMatch[1], null);
+    if (!post) throw httpError(404, '留言不存在');
     const deleteToken = String(req.headers['x-delete-token'] || '').trim();
     const adminToken = String(req.headers['x-admin-token'] || '').trim();
-    const allowed = tokenMatches(deleteToken, posts[index].deleteTokenHash) || adminMatches(adminToken);
+    const allowed = tokenMatches(deleteToken, post.deleteTokenHash) || adminMatches(adminToken);
     if (!allowed) throw httpError(403, '没有删除权限：需要发布时保存的删除令牌');
-    posts.splice(index, 1);
-    saveCommunity();
+    store.remove(post.id);
     broadcastRefresh();
     sendJson(res, 200, { ok: true, id: deleteMatch[1] });
     return;
@@ -702,14 +771,15 @@ server.listen(PORT, HOST, () => {
   console.log('  页面：http://localhost:' + PORT + '/');
   console.log('  天地图白名单不接受 localhost；本地调试可用 http://lvh.me:' + PORT + '/');
   console.log('  健康检查：http://localhost:' + PORT + '/api/health');
-  console.log('  社区数据：' + COMMUNITY_FILE);
+  console.log('  社区数据库：' + COMMUNITY_DB);
+  console.log('  旧社区 JSON：' + COMMUNITY_FILE + '（仅首次导入）');
   console.log('  人口数据：' + POPULATION_FILE);
   console.log('  按 Ctrl+C 停止。');
 });
 
 function shutdown(signal) {
-  console.log('\n收到 ' + signal + '，正在保存社区数据…');
-  try { saveCommunity(); } catch (err) { console.error('保存失败：' + err.message); }
+  console.log('\n收到 ' + signal + '，正在关闭社区数据库…');
+  try { store.close(); } catch (err) { console.error('关闭失败：' + err.message); }
   for (const client of sseClients) {
     try { client.end(); } catch (_) {}
   }

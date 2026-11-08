@@ -57,6 +57,8 @@ index.html              入口（跳转到方言学习页.html）
 方言学习页.html          主页（含“每人一句家乡话”乡音社区）
 fangyan-detail.html     方言详情页（发展脉络、人言乡音、地图、人口）
 server.js               零依赖本地服务：静态托管 + 社区 API/SSE + 人口 API
+lib/
+  community-store.js    社区 SQLite 数据层（Node 内置 node:sqlite）
 assets/
   data/
     dialects.js         方言共享数据：主页、详情页、社区与服务端共用（唯一数据源）
@@ -79,20 +81,21 @@ assets/
   *-800.webp / *-1600.webp  响应式 WebP 配图
 data/
   population.json       十个方言区公开人口统计与口径说明
-  community.json        服务端运行时生成，保存社区留言
+  community.json        旧版社区 JSON（仅首次启动时导入 SQLite，之后不再写入）
+  community.sqlite      社区 SQLite 数据库（运行时生成，含留言与点赞）
 _genmap.py              重新生成 assets/mapdata.js
 _gengeo.py              重新生成 assets/chinageo.js
 _shots/                 开发过程中的验证截图
 package.json            零依赖脚本入口（start / build / check / test）
 scripts/check.js        静态数据、页面引用、脚本语法与本地资源检查
 scripts/version-assets.js  按内容哈希刷新 JS/CSS 版本号
-tests/                  node:test 自动化测试（共享数据 + 服务端接口）
-.github/workflows/ci.yml  Node 20/22 自动检查与测试
+tests/                  node:test 自动化测试（共享数据 + SQLite 数据层 + 服务端接口）
+.github/workflows/ci.yml  Node 22/24 自动检查与测试
 ```
 
 ## 开发与检查
 
-项目仍然保持**零运行时依赖**，只要求 Node.js 18.17 及以上。`package.json` 只提供脚本，没有 `dependencies`，不需要 `npm install`。
+项目仍然保持**零运行时依赖**，只要求 Node.js 22.13 及以上（社区数据层使用内置的 `node:sqlite`，该版本起不再需要 `--experimental-sqlite` 开关）。`package.json` 只提供脚本，没有 `dependencies`，不需要 `npm install`。
 
 ```bash
 npm start        # 等同于 node server.js
@@ -112,21 +115,28 @@ npm test         # 运行共享数据与服务端接口测试
 
 修改 `assets/*.js` 或 `assets/*.css` 后，先运行 `npm run build` 更新版本号，再运行 `npm run check`。版本号用于配合一年期 `immutable` 缓存，避免浏览器继续使用旧资源。
 
-`npm test` 使用 Node 内置的 `node:test`，不会修改正式的 `data/community.json`。服务端测试会自动选择一个空闲端口，并把社区数据写到系统临时目录。服务端支持以下环境变量，便于测试或单独部署时隔离数据：
+`npm test` 使用 Node 内置的 `node:test`，不会修改正式的 `data/community.sqlite`。服务端测试会自动选择一个空闲端口，并把社区数据库写到系统临时目录。服务端支持以下环境变量，便于测试或单独部署时隔离数据：
 
 ```bash
 PORT=8787
 HOST=0.0.0.0
 DATA_DIR=./data                 # 数据目录，默认 ./data
-COMMUNITY_FILE=./data/community.json
+COMMUNITY_DB=./data/community.sqlite   # 社区 SQLite 数据库
+COMMUNITY_FILE=./data/community.json   # 仅用于首次导入旧数据
 POPULATION_FILE=./data/population.json
 COMMUNITY_ADMIN_TOKEN=随机长字符串
+CLIENT_TOKEN_SECRET=随机长字符串   # 不设置时每个进程随机生成，重启后旧会话失效
+CLIENT_TOKEN_TTL_MS=86400000       # 匿名会话有效期，默认 24 小时
 ALLOWED_ORIGINS=http://example.com,https://example.org
 ```
 
+`community.json` 只在 SQLite 中还没有导入标记（`meta.community_json_imported`）时读取一次，把旧留言、点赞与删除令牌哈希迁移进数据库；之后所有读写都走 SQLite，JSON 文件不再更新。数据库启用 WAL 模式与外键约束，留言上限由服务端统一裁剪。
+
 `ALLOWED_ORIGINS` 用逗号分隔允许跨域调用 API 的来源；不设置时只允许同源请求。设置后同源仍然可用。如果直接用 `file://` 打开页面并连接本机服务，浏览器会发送 `Origin: null`，需要显式把 `null` 加入白名单，否则社区会回退到本地模式。
 
-测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入和人口接口。仓库还提供 `.github/workflows/ci.yml`，在 Node 20/22 上自动运行 `npm run check` 与 `npm test`。
+社区写操作使用服务端签发的匿名会话：页面先请求 `POST /api/session`，服务端返回带过期时间的 HMAC 签名令牌与随机客户端 ID，后续通过 `X-Client-Token` 或 `Authorization: Bearer <token>` 提交。读取接口仍兼容旧的 `X-Client-Id`，但发布和点赞不再接受只带客户端 ID 的请求。设置固定的 `CLIENT_TOKEN_SECRET` 后，服务重启不会让已签发令牌立即失效。
+
+测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入和人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化与旧 JSON 导入。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
 
 `server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。
 
@@ -207,12 +217,12 @@ HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-
 ## 乡音社区说明（主页面）
 
 - 社区入口在主页末尾 `#community`，十个方言详情页不再重复放置社区模块，只保留指向主页社区的链接。
-- **有 Node 服务时**：留言保存到 `data/community.json`，通过 `/api/community` 读写，并用 SSE（`/api/community/stream`）向所有打开的页面推送刷新事件；点赞按浏览器客户端 ID 去重。发布和点赞都要求 `X-Client-Id`，服务端会校验格式；它只能用于区分浏览器，不是账号认证。
+- **有 Node 服务时**：留言保存到 `data/community.sqlite`（Node 内置 SQLite），通过 `/api/community` 读写，并用 SSE（`/api/community/stream`）向所有打开的页面推送刷新事件；点赞按匿名会话客户端 ID 去重。发布和点赞要求服务端签发的匿名会话令牌（`POST /api/session` → `X-Client-Token` 或 `Authorization: Bearer`），读取仍兼容 `X-Client-Id`。令牌只能区分浏览器会话，不是账号认证；任何人都可以申请新令牌。
 - **跨域限制**：API 默认只允许同源请求；需要其他站点调用时，用 `ALLOWED_ORIGINS` 显式配置白名单，预检来自未授权来源会返回 `403`。
 - **删除权限**：发布成功时服务端只向发布者返回一次随机删除令牌，浏览器把它保存在 `localStorage`（键名 `fangyan-delete-tokens-v1`）。删除时必须带上该令牌，其他人即使能看到留言也无法删除。换设备、换浏览器或清理浏览器数据后，发布者也会失去删除令牌；此时只能由设置 `COMMUNITY_ADMIN_TOKEN` 的管理员删除。
 - **没有 Node 服务时**：自动回退到纯前端本地模式，留言、语音、点赞和回复保存在当前浏览器的 `localStorage`（键名 `fangyan-community-v1`）。
 - 语音支持本地上传或浏览器录音，单个文件限制约 1.5MB；浏览器不支持录音时会提示改用上传。
-- 换设备、换浏览器或清理浏览器数据后，本地模式留言会消失；服务端模式的数据保存在本机 `data/community.json`，但仍没有账号、内容审核和隐私合规方案，**不能直接当作公开上线服务**。
+- 换设备、换浏览器或清理浏览器数据后，本地模式留言会消失；服务端模式的数据保存在本机 `data/community.sqlite`，但仍没有账号、内容审核和隐私合规方案，**不能直接当作公开上线服务**。
 
 ## 人言乡音与录音说明
 
@@ -236,7 +246,7 @@ HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-
 - **部分方言暂无授权录音**：官话、客家话、湘语、赣语、晋语、徽语、平话没有找到许可清晰的真人录音，页面如实留空。
 - **天地图需要自行申请 Key**：仓库不包含任何 Key；未配置时只能使用离线示意。在线底图需遵守天地图服务条款，公开发布前请确认 Key 的配额与使用范围。
 - **人口不是实时人口**：现有公开统计最晚只到 2012 年出版、2004 年人口口径，没有权威的 2026 年实时数据。
-- **社区服务仅适合本机演示**：没有账号、内容审核和隐私合规能力；删除已改为“发布令牌 + 可选管理员令牌”，发布/点赞要求客户端标识，CORS 默认同源并支持白名单，发布/点赞/删除有进程内限流，但客户端标识可伪造、限流重启即清零，仍不是生产级防护。
+- **社区服务仅适合本机演示**：没有账号、内容审核和隐私合规能力；删除已改为“发布令牌 + 可选管理员令牌”，发布/点赞要求服务端签发的匿名会话令牌，CORS 默认同源并支持白名单，发布/点赞/删除有进程内限流。但令牌可自由申请、限流重启即清零，仍不是生产级防护；未设置 `CLIENT_TOKEN_SECRET` 时重启会让旧令牌失效。
 - **源码屏蔽只覆盖自带 Node 服务**：`server.js` 会拒绝访问 `server.js`、`README.md`、`*.py`、`data/`、`_backup/`、`_shots/` 等敏感路径；如果改用 `python -m http.server` 或普通静态托管，这些文件仍可能被直接下载，请不要把项目根目录原样公开到公网。
 - **共享数据已收拢**：方言名称、颜色、省份、历史、风俗和地图范围统一在 `assets/data/dialects.js`，主页、详情页、社区和服务端都从这一份数据读取；修改方言信息时只需要改这个文件。
 - **注音与用词需要母语者审校**：页面混用粤拼、白话字/台罗及近音标注，部分方言词使用民间借字或近音字写法。

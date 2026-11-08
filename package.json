@@ -7,9 +7,9 @@
     "start": "node server.js",
     "build": "node scripts/version-assets.js",
     "check": "node scripts/check.js",
-    "test": "node --test tests/data.test.js tests/server.test.js"
+    "test": "node --test tests/data.test.js tests/store.test.js tests/server.test.js"
   },
   "engines": {
-    "node": ">=18.17"
+    "node": ">=22.13.0"
   }
 }

@@ -134,6 +134,13 @@ test('页面样式已外置且不再包含内联 style 块', () => {
   }
 });
 
+test('社区客户端使用服务端匿名会话令牌', () => {
+  const community = read('assets/community.js');
+  assert.match(community, /\/api\/session/);
+  assert.match(community, /X-Client-Token/);
+  assert.match(community, /fangyan-session-v1/);
+});
+
 test('本地 JS/CSS 的版本号与内容哈希一致', () => {
   const pages = ['index.html', '方言学习页.html', 'fangyan-detail.html'];
   let checked = 0;
