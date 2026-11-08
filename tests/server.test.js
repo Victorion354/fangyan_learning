@@ -120,7 +120,8 @@ function createPost(session, overrides = {}) {
       province: '广东省',
       name: '测试乡音',
       type: 'dialect',
-      text: '自动化测试留言'
+      text: '自动化测试留言',
+      consent: true
     }, overrides)
   });
 }
@@ -450,7 +451,7 @@ test('写入需要会话令牌，读取兼容 X-Client-Id', async () => {
   const bearerWrite = await jsonFetch('/api/community', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + session.token },
-    body: { board: 'guangzhou', text: 'Bearer 令牌写入' }
+    body: { board: 'guangzhou', text: 'Bearer 令牌写入', consent: true }
   });
   assert.equal(bearerWrite.status, 201);
 

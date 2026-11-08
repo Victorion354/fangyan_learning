@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>隐私政策 · 一声一味</title>
+<meta name="description" content="一声一味乡音社区隐私政策：说明匿名留言、账号、语音、举报与限流信息的收集范围、用途、保存期限，以及数据导出和账号注销方式。">
+<meta name="theme-color" content="#B23A30">
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23B23A30'/%3E%3Cpath d='M20 44h24M24 34h16M27 24h10' stroke='%23F1EAE0' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/main.css?v=97403b0648">
+<link rel="stylesheet" href="assets/privacy.css?v=80a6ba90b9">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-in">
+    <a class="brand" href="%E6%96%B9%E8%A8%80%E5%AD%A6%E4%B9%A0%E9%A1%B5.html"><span class="mark">言</span><span>一声一味<small>· 十大方言</small></span></a>
+    <ul class="nav-links">
+      <li><a href="%E6%96%B9%E8%A8%80%E5%AD%A6%E4%B9%A0%E9%A1%B5.html#community">返回乡音社区</a></li>
+      <li><a href="%E6%96%B9%E8%A8%80%E5%AD%A6%E4%B9%A0%E9%A1%B5.html">返回首页</a></li>
+    </ul>
+  </div>
+</nav>
+
+<main>
+  <section class="sec" id="privacy">
+    <div class="wrap pp-wrap">
+      <div class="sec-head">
+        <div class="eyebrow"><span class="seal">隐</span>隐私与数据</div>
+        <h2>你的乡音，<span class="kw">由你决定</span></h2>
+        <p>这份政策说明乡音社区会收集哪些信息、为什么收集、保存多久，以及你如何导出或删除自己的数据。</p>
+      </div>
+
+      <article class="pp">
+        <p class="pp-meta">生效日期：2026 年 11 月 8 日 · 适用于“一声一味 · 中国十大方言”原型及其乡音社区</p>
+
+        <div class="pp-notice">
+          <strong>先说明：这是一个设计展示原型。</strong>
+          当前版本用于演示交互与社区治理流程，尚未接入正式运营主体、邮件服务和完整的管理审计日志。正式公开上线前，运营方需要补充主体名称、地址、联系方式，并完成适用的合规审查。本页不构成法律意见。
+        </div>
+
+        <section>
+          <h3>一、我们收集哪些信息</h3>
+          <p>我们尽量只收集社区运行所必需的信息，不要求真实姓名、手机号或身份证件。</p>
+          <div class="pp-table-wrap">
+            <table class="pp-table">
+              <thead>
+                <tr><th>场景</th><th>收集内容</th><th>是否必填</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>匿名留言</td>
+                  <td>昵称、家乡省份、留言类型、留言文本、可选的语音、发布时间、匿名会话标识、隐私政策同意时间</td>
+                  <td>留言文本必填，其余可选</td>
+                </tr>
+                <tr>
+                  <td>注册账号</td>
+                  <td>用户名、显示昵称、密码的 scrypt 加盐哈希、注册时间、隐私政策同意时间</td>
+                  <td>用户名与密码必填</td>
+                </tr>
+                <tr>
+                  <td>登录会话</td>
+                  <td>会话令牌的 SHA-256 哈希、所属账号、创建时间、过期时间</td>
+                  <td>登录时自动生成</td>
+                </tr>
+                <tr>
+                  <td>举报</td>
+                  <td>被举报留言、举报原因、举报人标识（账号 ID 或匿名会话标识）、举报时间、处理状态</td>
+                  <td>举报原因可留空</td>
+                </tr>
+                <tr>
+                  <td>安全与限流</td>
+                  <td>请求来源 IP（用于短期限流）、请求时间、接口路径与必要的技术错误信息</td>
+                  <td>自动产生</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>我们<strong>不会</strong>收集你的通讯录、精确位置、相册或与社区无关的文件。语音只在你主动上传或录音并发布时才会保存。</p>
+        </section>
+
+        <section>
+          <h3>二、浏览器本地保存了什么</h3>
+          <p>为了记住匿名会话、删除权限和登录状态，页面会在你的浏览器本地保存以下键值。你可以随时通过浏览器设置清除它们：</p>
+          <ul>
+            <li><code>fangyan-client-v1</code>：匿名客户端标识，用于区分点赞和留言归属。</li>
+            <li><code>fangyan-session-v1</code>：匿名会话令牌，默认 24 小时有效。</li>
+            <li><code>fangyan-delete-tokens-v1</code>：你发布留言时获得的删除令牌，只保存在本机。</li>
+            <li><code>fangyan-account-v1</code>：账号登录态与过期时间。</li>
+            <li><code>fangyan-admin-token-v1</code>：仅管理员使用，保存在 <code>sessionStorage</code>，关闭标签页即失效。</li>
+          </ul>
+          <p>这些本地数据不会自动上传，只有在你使用对应功能时才会随请求发送。清除浏览器数据后，未登录账号的匿名留言可能无法再通过本机删除令牌删除。</p>
+        </section>
+
+        <section>
+          <h3>三、我们如何使用这些信息</h3>
+          <ul>
+            <li>展示公开留言、板块统计与语音播放。</li>
+            <li>让你删除自己发布的留言，或通过账号管理自己的内容。</li>
+            <li>执行关键词过滤、处理举报、维护社区秩序。</li>
+            <li>防止刷屏、暴力破解和滥用接口。</li>
+            <li>生成仅包含你本人数据的导出文件，或在注销时删除相关数据。</li>
+          </ul>
+          <p>我们不会出售你的个人信息，也不会把留言或语音用于广告画像。原型阶段不会基于你的数据做自动化决策。</p>
+        </section>
+
+        <section>
+          <h3>四、留言会公开显示</h3>
+          <p>通过审核的留言、昵称、省份、留言类型、语音和时间会出现在公开社区列表中，任何访问者都可以看到和播放。请不要在留言或语音中填写身份证号、住址、电话号码、银行卡号等敏感信息。</p>
+          <p>留言采用“先发后审”：命中垃圾广告、诈骗、色情交易、违禁品等关键词，或在一定时间内被多名用户举报的留言，会先进入待审或隐藏状态，由管理员决定公开、隐藏或删除。关键词过滤只针对社区治理问题，不用于观点审查。</p>
+        </section>
+
+        <section>
+          <h3>五、保存期限</h3>
+          <ul>
+            <li><strong>公开留言与语音</strong>：保存到你、管理员或运营方删除，或服务停止、数据被清理时。</li>
+            <li><strong>待审、隐藏或移除的留言</strong>：保存到审核处理完成或运营方清理时；原型阶段没有自动过期删除。</li>
+            <li><strong>举报记录</strong>：保存到举报处理完成及后续必要的争议处理期；原型阶段不会自动清除。</li>
+            <li><strong>账号与登录会话</strong>：账号保存到你主动注销；登录会话默认 30 天过期，服务启动时会清理过期会话。</li>
+            <li><strong>限流信息</strong>：只在分钟级窗口内保存在内存或 Redis 中，不写入业务数据库。</li>
+            <li><strong>服务端日志</strong>：取决于部署方式。原型默认只向控制台输出启动与错误信息，不建立完整访问日志。</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>六、你的权利</h3>
+          <h4>导出数据</h4>
+          <p>登录后点击社区账号栏的“导出数据”，可以下载一份 JSON 文件，包含账号公开信息、你名下留言的文本与状态、语音地址、以及你提交过的举报记录。导出内容不包含密码哈希或会话令牌。</p>
+          <h4>注销账号</h4>
+          <p>登录后点击“注销账号”，输入密码确认后，会删除账号、该账号名下的全部留言与关联语音、登录会话，以及该账号提交过的举报。注销不可恢复。</p>
+          <p>注销账号<strong>不会</strong>自动删除你在未登录状态下用同一浏览器发布的匿名留言，因为这些留言没有与账号绑定。你仍可以使用发布时保存在本机的删除令牌逐条删除，或联系运营方处理。</p>
+          <h4>更正与删除</h4>
+          <p>登录账号发布的留言可以直接删除；匿名留言可通过本机保存的删除令牌删除。需要更正其他信息时，可在正式上线后通过运营方公布的联系方式提出。</p>
+          <p class="pp-warn">当前原型没有接入邮件服务，暂不支持自助找回密码或邮件验证。请不要在原型中重复使用重要账号的密码。</p>
+        </section>
+
+        <section>
+          <h3>七、第三方与外部服务</h3>
+          <ul>
+            <li><strong>地图</strong>：方言详情页可能按配置加载天地图底图。是否加载取决于是否填写天地图 Key，加载时你的浏览器会直接向天地图服务发起请求，适用其隐私政策与服务条款。</li>
+            <li><strong>对象存储</strong>：语音可能保存在 S3 兼容的对象存储（如 AWS S3、Cloudflare R2、MinIO、RustFS 或兼容 OSS 的端点）。语音通过公开读地址播放，任何获得链接的人都可以访问。</li>
+            <li><strong>数据库与缓存</strong>：开发环境默认使用本机 SQLite；生产环境可使用 PostgreSQL，并用 Redis 做限流和实时广播。</li>
+            <li><strong>托管与网络</strong>：正式部署时的服务器、CDN、反向代理和日志服务由运营方选择，其数据处理规则应在正式政策中补充。</li>
+          </ul>
+          <p>除法律要求或保障服务安全所必需的情形外，我们不会主动向无关第三方提供你的个人信息。</p>
+        </section>
+
+        <section>
+          <h3>八、未成年人</h3>
+          <p>社区内容面向一般公众。未成年人应在监护人指导下使用，不要发布真实姓名、学校、住址、联系方式等可识别个人身份的信息。若发现未成年人敏感信息，可举报或联系运营方删除。</p>
+        </section>
+
+        <section>
+          <h3>九、安全措施与风险</h3>
+          <ul>
+            <li>密码使用 Node 内置 <code>crypto.scrypt</code> 加盐哈希，服务端不保存明文密码。</li>
+            <li>账号会话令牌只保存 SHA-256 哈希，支持服务端吊销与过期清理。</li>
+            <li>匿名写入需要服务端签发的会话令牌；删除需要发布令牌、管理员令牌或账号登录态。</li>
+            <li>接口默认同源，跨域需显式配置白名单；响应启用 CSP、HSTS 等安全头。</li>
+          </ul>
+          <p>任何互联网服务都无法保证绝对安全。请不要在留言中发布敏感个人信息；如发现安全问题，请在正式上线后通过运营方公布的联系方式报告。</p>
+        </section>
+
+        <section>
+          <h3>十、政策更新</h3>
+          <p>功能或数据处理方式发生变化时，我们会更新本页并修改生效日期。涉及重大变化时，会在社区显著位置提示。继续使用服务即表示你了解更新后的政策；如不同意，可以停止使用并注销账号。</p>
+        </section>
+
+        <section>
+          <h3>十一、联系与运营方信息</h3>
+          <p>正式公开上线前，运营方应在本节补充：</p>
+          <ul>
+            <li>运营主体全称与注册地址；</li>
+            <li>隐私事务联系人及有效联系方式；</li>
+            <li>数据存储所在地与跨境传输安排（如适用）；</li>
+            <li>投诉、举报与监管对接渠道。</li>
+          </ul>
+          <p class="pp-warn">在以上信息补齐之前，本项目仅适合本机演示或小范围内部试用，不应作为面向公众的正式服务运行。</p>
+        </section>
+
+        <div class="pp-back">
+          <a href="%E6%96%B9%E8%A8%80%E5%AD%A6%E4%B9%A0%E9%A1%B5.html#community">返回乡音社区</a>
+          <a href="%E6%96%B9%E8%A8%80%E5%AD%A6%E4%B9%A0%E9%A1%B5.html">返回首页</a>
+        </div>
+      </article>
+    </div>
+  </section>
+</main>
+
+<div class="divider"></div>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="fn">一声一味<small>· 中国十大方言学习图鉴</small></div>
+    <p>这是一个<strong>设计展示原型</strong>。隐私政策会随功能调整而更新；正式上线前需由运营方补充主体信息并完成合规审查。</p>
+    <div class="bar"><span>© 2026 一声一味 · 中国十大方言</span><span><a href="%E6%96%B9%E8%A8%80%E5%AD%A6%E4%B9%A0%E9%A1%B5.html">返回首页</a></span></div>
+  </div>
+</footer>
+</body>
+</html>

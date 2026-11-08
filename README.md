@@ -1,6 +1,6 @@
 # 一声一味 · 中国十大方言
 
-一个静态的方言学习图鉴原型：十个方言区、词汇翻卡、十句对比、方言辨识小测、主页面乡音社区，以及每个方言的详细历史、人言乡音、可交互分布地图和使用人口对比。
+一个静态的方言学习图鉴原型：十个方言区、词汇翻卡、十句对比、方言辨识小测、主页面乡音社区，以及每个方言的详细历史、人言乡音、可交互分布地图和使用人口对比。社区支持匿名留言，也支持用户名 + 密码账号、关键词先发后审、举报队列、数据导出与账号注销。
 
 ## 打开方式
 
@@ -25,10 +25,16 @@
   PORT=8788 HOST=127.0.0.1 node server.js
   ```
 
-  如需管理员删除任意留言，可在启动时设置管理员令牌（不设置则只能凭发布时返回的删除令牌删除）：
+  如需管理员删除任意留言、处理待审内容和举报，可在启动时设置管理员令牌（不设置则只能凭发布时返回的删除令牌删除，管理接口返回 503）：
 
   ```bash
   COMMUNITY_ADMIN_TOKEN=请换成随机长字符串 node server.js
+  ```
+
+  内容审核默认开启，举报达到 3 条会自动转入待审。需要调整时：
+
+  ```bash
+  MODERATION_ENABLED=true REPORT_HIDE_THRESHOLD=3 MODERATION_KEYWORDS=自定义词1,自定义词2 node server.js
   ```
 
   未启动 Node 服务时，页面会自动回退到本机浏览器存储，功能仍可使用。
@@ -48,7 +54,7 @@
 
 详情页顶部新增了「发展脉络 / 人言乡音 / 分布与风俗 / 使用人口」四个快捷入口，滚动时自动高亮当前板块，方便直接跳转。地图缩放范围调整为 2–18 级，可以拉远看全国/周边全貌，也可以放大到更细的街区尺度。
 
-主页末尾是**乡音社区 · 每人一句家乡话**：按方言板块浏览、筛选、留言、上传/录制语音、点赞、接话和删除。启动 Node 服务时跨浏览器同步，否则只保存在本机浏览器。社区已从十个详情页统一收拢到主页，详情页只保留指向主页社区的链接。
+主页末尾是**乡音社区 · 每人一句家乡话**：按方言板块浏览、筛选、留言、上传/录制语音、点赞、接话和删除。启动 Node 服务时跨浏览器同步，否则只保存在本机浏览器。社区已从十个详情页统一收拢到主页，详情页只保留指向主页社区的链接。登录账号后留言会归属账号；未登录仍可匿名发布。留言采用“先发后审”，命中垃圾广告等关键词或举报达到阈值的留言会进入待审队列，由管理员处理。隐私政策见 `privacy.html`。
 
 ## 文件结构
 
@@ -56,8 +62,11 @@
 index.html              入口（跳转到方言学习页.html）
 方言学习页.html          主页（含“每人一句家乡话”乡音社区）
 fangyan-detail.html     方言详情页（发展脉络、人言乡音、地图、人口）
+privacy.html            隐私政策页（收集范围、保存期限、导出与注销）
 server.js               社区服务：静态托管 + 社区 API/SSE + 人口 API
 lib/
+  accounts.js           scrypt 密码哈希、用户名校验、账号会话令牌
+  moderation.js         垃圾广告/诈骗等关键词过滤与广告特征检测
   community-store.js    SQLite 数据层（Node 内置 node:sqlite，开发默认）
   postgres-store.js     PostgreSQL 数据层（生产可选）
   store.js              数据层工厂（按环境选择 SQLite / PostgreSQL）
@@ -84,8 +93,11 @@ assets/
   main.js               主页面渲染、互动与结构化数据逻辑
   detail.css            详情页样式
   detail.js             详情页地图、音频、人口与结构化数据逻辑
-  community.css         主页面乡音社区样式
+  community.css         主页面乡音社区样式（含账号栏、管理面板、同意勾选）
   community.js          主页面乡音社区逻辑（本地 / 服务端实时）
+  account.js            账号面板：登录、注册、导出数据、注销
+  admin.js              管理员面板：待审、举报、公开/隐藏/删除
+  privacy.css           隐私政策页样式
   mapdata.js            离线省界 SVG 路径 + 投影参数（由 _genmap.py 生成）
   chinageo.js           简化后的省级 GeoJSON，供 Leaflet 在线地图使用（由 _gengeo.py 生成）
   china.json            省界 GeoJSON 源数据
@@ -104,7 +116,7 @@ _shots/                 开发过程中的验证截图
 package.json            脚本入口（默认零运行时依赖，生产可选依赖见 optionalDependencies）
 scripts/check.js        静态数据、页面引用、脚本语法与本地资源检查
 scripts/version-assets.js  按内容哈希刷新 JS/CSS 版本号
-tests/                  node:test 自动化测试（共享数据 + 数据层适配 + 服务端接口）
+tests/                  node:test 自动化测试（共享数据 + 数据层适配 + 服务端/账号接口）
 .github/workflows/ci.yml  Node 22/24 自动检查与测试
 ```
 
@@ -144,6 +156,10 @@ POPULATION_FILE=./data/population.json
 COMMUNITY_ADMIN_TOKEN=随机长字符串
 CLIENT_TOKEN_SECRET=随机长字符串   # 不设置时每个进程随机生成，重启后旧会话失效
 CLIENT_TOKEN_TTL_MS=86400000       # 匿名会话有效期，默认 24 小时
+USER_SESSION_TTL_MS=2592000000     # 账号登录会话有效期，默认 30 天
+REPORT_HIDE_THRESHOLD=3            # 举报达到多少条自动转待审
+MODERATION_ENABLED=true            # false 关闭关键词过滤，举报队列仍可用
+MODERATION_KEYWORDS=词1,词2        # 追加审核关键词
 ALLOWED_ORIGINS=http://example.com,https://example.org
 PUBLIC_API_ORIGIN=https://api.example.com   # 页面与 API 不同源时用于 CSP
 TRUST_PROXY=true                    # 位于 Caddy / Nginx 之后时信任 X-Forwarded-For
@@ -171,7 +187,7 @@ UPLOAD_TTL_SECONDS=300
 
 社区写操作使用服务端签发的匿名会话：页面先请求 `POST /api/session`，服务端返回带过期时间的 HMAC 签名令牌与随机客户端 ID，后续通过 `X-Client-Token` 或 `Authorization: Bearer <token>` 提交。读取接口仍兼容旧的 `X-Client-Id`，但发布和点赞不再接受只带客户端 ID 的请求。设置固定的 `CLIENT_TOKEN_SECRET` 后，服务重启不会让已签发令牌立即失效。
 
-测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入、对象存储未配置时的降级行为、人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化、旧 JSON 导入和数据层/对象存储适配器。当前共 43 项测试。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
+测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入、对象存储未配置时的降级行为、人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化、旧 JSON 导入和数据层/对象存储适配器；账号测试覆盖注册校验、大小写不敏感重名、登录/退出、隐私同意、账号留言归属与删除、关键词待审、举报去重与阈值、管理员接口、数据导出与注销。当前共 53 项测试。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
 
 `server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。
 
@@ -195,7 +211,7 @@ worker-src 'self' blob:; manifest-src 'self'
 
 HTTPS 部署时还会自动附加 `Strict-Transport-Security` 和 `Cross-Origin-Opener-Policy: same-origin`；HTTP 本地调试不发送这两个头，避免浏览器忽略或误伤。
 
-发布、点赞和删除接口使用进程内限流（发布 20 次/分钟、点赞 120 次/分钟、删除 30 次/分钟），超限返回 `429` 并带 `Retry-After`。限流表会定期清理过期记录，但重启服务后会清零，仍不是分布式生产级限流。
+发布、点赞、删除、注册、登录、举报、导出和注销接口使用限流（发布 20 次/分钟、点赞 120 次/分钟、删除 30 次/分钟、注册 10 次/10 分钟、登录 20 次/10 分钟、举报 30 次/分钟、导出 10 次/10 分钟、注销 5 次/10 分钟），超限返回 `429` 并带 `Retry-After`。限流表会定期清理过期记录，但重启服务后会清零，仍不是分布式生产级限流。
 
 ## 生产部署（方案 B）
 
@@ -246,7 +262,7 @@ docker compose up -d --build
 - 静态文件由 Caddy/Nginx 托管时，反向代理配置里已经补上安全响应头与 CSP；改用 CDN 时需要在 CDN 侧配置同等响应头。
 - 删除留言时会同步删除对应语音对象；但超过留言上限被自动裁剪的旧留言，其对象暂不会自动清理，需要后续加定时清理任务。
 - Redis 不可用时服务会回退到单实例内存限流；生产环境建议监控 Redis 连接。
-- 当前仍没有账号、内容审核、举报和隐私合规流程，**不能直接当作公开上线服务**。
+- 账号、内容审核、举报与隐私流程已接入，但仍是原型级实现：没有邮件验证、密码找回、双因素认证、完整管理审计日志和自动化数据保留任务，**不能直接当作公开上线服务**。
 
 ## 性能与 SEO
 
@@ -303,13 +319,37 @@ docker compose up -d --build
 ## 乡音社区说明（主页面）
 
 - 社区入口在主页末尾 `#community`，十个方言详情页不再重复放置社区模块，只保留指向主页社区的链接。
-- **有 Node 服务时**：留言默认保存到 `data/community.sqlite`（Node 内置 SQLite）；配置 `DATABASE_URL` 后改用 PostgreSQL。通过 `/api/community` 读写，并用 SSE（`/api/community/stream`）向所有打开的页面推送刷新事件；点赞按匿名会话客户端 ID 去重。发布和点赞要求服务端签发的匿名会话令牌（`POST /api/session` → `X-Client-Token` 或 `Authorization: Bearer`），读取仍兼容 `X-Client-Id`。令牌只能区分浏览器会话，不是账号认证；任何人都可以申请新令牌。
+- **有 Node 服务时**：留言默认保存到 `data/community.sqlite`（Node 内置 SQLite）；配置 `DATABASE_URL` 后改用 PostgreSQL。通过 `/api/community` 读写，并用 SSE（`/api/community/stream`）向所有打开的页面推送刷新事件；点赞按匿名会话客户端 ID 去重。发布和点赞要求服务端签发的匿名会话令牌（`POST /api/session` → `X-Client-Token` 或 `Authorization: Bearer`），读取仍兼容 `X-Client-Id`。匿名令牌只区分浏览器会话，不是账号认证；账号登录态使用单独的 `Authorization: Bearer <user session token>`，两者可以同时携带。
 - **跨域限制**：API 默认只允许同源请求；需要其他站点调用时，用 `ALLOWED_ORIGINS` 显式配置白名单，预检来自未授权来源会返回 `403`。
-- **删除权限**：发布成功时服务端只向发布者返回一次随机删除令牌，浏览器把它保存在 `localStorage`（键名 `fangyan-delete-tokens-v1`）。删除时必须带上该令牌，其他人即使能看到留言也无法删除。换设备、换浏览器或清理浏览器数据后，发布者也会失去删除令牌；此时只能由设置 `COMMUNITY_ADMIN_TOKEN` 的管理员删除。
+- **删除权限**：发布成功时服务端只向发布者返回一次随机删除令牌，浏览器把它保存在 `localStorage`（键名 `fangyan-delete-tokens-v1`）。删除时必须带上该令牌、管理员令牌，或登录发布留言的账号。换设备、换浏览器或清理浏览器数据后，匿名发布者会失去删除令牌；此时只能由设置 `COMMUNITY_ADMIN_TOKEN` 的管理员删除。
+- **账号**：用户名 + 密码注册，不要求邮箱或手机号。密码使用 Node 内置 `crypto.scrypt` 加盐哈希；登录会话令牌只保存 SHA-256 哈希，默认 30 天过期，可服务端吊销。用户名大小写不敏感唯一，允许 2–24 位中文、字母、数字、下划线或短横线；密码 8–72 位。注册和发帖都必须勾选隐私同意。
+- **内容审核**：`lib/moderation.js` 对垃圾广告、诈骗、色情交易、违禁品等关键词做过滤，并检测多个外链、疑似手机号和重复字符堆砌。命中后留言进入 `pending` 待审队列，不直接公开；管理员可恢复公开、隐藏或删除。设置 `MODERATION_ENABLED=false` 可关闭关键词过滤，`MODERATION_KEYWORDS` 可追加自定义词。
+- **举报**：公开留言可举报，同一举报人对同一条留言只能举报一次。未处理举报达到 `REPORT_HIDE_THRESHOLD`（默认 3）时，留言自动转入待审。管理员可在管理面板处理或忽略举报。
+- **隐私数据权利**：账号栏提供“导出数据”和“注销账号”。导出为 JSON，不含密码哈希或会话令牌；注销需输入密码，会删除账号、账号名下留言与语音、登录会话和该账号提交的举报。未登录时的匿名留言不与账号绑定，注销不会自动删除。完整说明见 `privacy.html`。
+- **管理员面板**：页面上的“内容管理”入口需要 `COMMUNITY_ADMIN_TOKEN`，令牌只保存在 `sessionStorage`，关闭标签页即失效。管理接口使用 `X-Admin-Token`；未配置令牌时返回 `503`。
 - **没有 Node 服务时**：自动回退到纯前端本地模式，留言、语音、点赞和回复保存在当前浏览器的 `localStorage`（键名 `fangyan-community-v1`）。
 - 语音支持本地上传或浏览器录音，单个文件限制约 1.5MB；浏览器不支持录音时会提示改用上传。
 - 配置对象存储后，语音不再塞进数据库：页面先请求 `POST /api/uploads/sign` 拿到预签名 PUT 地址，直传成功后留言只保存对象键，播放地址由 `S3_PUBLIC_BASE_URL` 生成。未配置对象存储时自动回退到内联 data URI。
-- 换设备、换浏览器或清理浏览器数据后，本地模式留言会消失；服务端模式的数据保存在 SQLite 或 PostgreSQL 中，但仍没有账号、内容审核和隐私合规方案，**不能直接当作公开上线服务**。
+- 换设备、换浏览器或清理浏览器数据后，本地模式留言会消失；服务端模式的数据保存在 SQLite 或 PostgreSQL 中。原型已接入账号、审核、举报和隐私数据权利，但仍缺少邮件验证、密码找回、双因素认证、完整管理审计日志和自动保留期清理，**不能直接当作公开上线服务**。
+
+### 账号、审核与举报接口
+
+| 方法 | 路径 | 说明 | 认证 |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/register` | 注册并登录；body 需 `username`、`password`、`consent: true`，可选 `displayName` | 无 |
+| `POST` | `/api/auth/login` | 用户名 + 密码登录 | 无 |
+| `POST` | `/api/auth/logout` | 吊销当前登录会话 | 账号 Bearer |
+| `GET` | `/api/auth/me` | 当前账号信息 | 账号 Bearer |
+| `GET` | `/api/me/export` | 导出账号、本人留言与举报记录 JSON | 账号 Bearer |
+| `DELETE` | `/api/account` | 注销账号；body 需 `password` | 账号 Bearer |
+| `POST` | `/api/community/:id/report` | 举报公开留言；body 可选 `reason` | 匿名会话令牌 |
+| `GET` | `/api/admin/overview` | 用户数、留言数、状态统计、未处理举报数 | `X-Admin-Token` |
+| `GET` | `/api/admin/posts?status=pending` | 管理端留言列表，`status` 可为 `visible`/`pending`/`hidden`/`removed`/`all` | `X-Admin-Token` |
+| `PATCH` | `/api/admin/posts/:id` | 修改留言状态；body `{ status }` | `X-Admin-Token` |
+| `GET` | `/api/admin/reports?status=open` | 举报列表，`status` 可为 `open`/`resolved`/`dismissed`/`all` | `X-Admin-Token` |
+| `POST` | `/api/admin/reports/:id` | 处理举报；body `{ action: "resolve" \| "dismiss", hidePost?: true }` | `X-Admin-Token` |
+
+留言状态只有四种：`visible`（公开）、`pending`（待审）、`hidden`（隐藏）、`removed`（已移除）。公开列表只返回 `visible`；创建留言命中审核时响应会带 `pending: true` 和提示文本，但不会立即出现在公开列表中。
 
 ## 人言乡音与录音说明
 
@@ -333,7 +373,7 @@ docker compose up -d --build
 - **部分方言暂无授权录音**：官话、客家话、湘语、赣语、晋语、徽语、平话没有找到许可清晰的真人录音，页面如实留空。
 - **天地图需要自行申请 Key**：仓库不包含任何 Key；未配置时只能使用离线示意。在线底图需遵守天地图服务条款，公开发布前请确认 Key 的配额与使用范围。
 - **人口不是实时人口**：现有公开统计最晚只到 2012 年出版、2004 年人口口径，没有权威的 2026 年实时数据。
-- **社区服务仅适合本机演示**：没有账号、内容审核和隐私合规能力；删除已改为“发布令牌 + 可选管理员令牌”，发布/点赞要求服务端签发的匿名会话令牌，CORS 默认同源并支持白名单，发布/点赞/删除有进程内限流。但令牌可自由申请、限流重启即清零，仍不是生产级防护；未设置 `CLIENT_TOKEN_SECRET` 时重启会让旧令牌失效。
+- **社区服务仍是原型级防护**：已有账号、关键词先发后审、举报队列、数据导出和账号注销；删除支持“发布令牌 + 管理员令牌 + 账号登录态”。但匿名会话令牌可自由申请、举报阈值可被多会话绕过、限流重启即清零，且没有邮件验证、密码找回、双因素认证、完整管理审计日志和自动数据保留任务，仍不是生产级方案；未设置 `CLIENT_TOKEN_SECRET` 时重启会让旧匿名令牌失效。
 - **源码屏蔽只覆盖自带 Node 服务**：`server.js` 会拒绝访问 `server.js`、`README.md`、`*.py`、`data/`、`_backup/`、`_shots/` 等敏感路径；如果改用 `python -m http.server` 或普通静态托管，这些文件仍可能被直接下载，请不要把项目根目录原样公开到公网。
 - **共享数据已收拢**：方言名称、颜色、省份、历史、风俗和地图范围统一在 `assets/data/dialects.js`，主页、详情页、社区和服务端都从这一份数据读取；修改方言信息时只需要改这个文件。
 - **注音与用词需要母语者审校**：页面混用粤拼、白话字/台罗及近音标注，部分方言词使用民间借字或近音字写法。

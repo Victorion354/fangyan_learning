@@ -20,6 +20,16 @@
     return 'http://localhost:8787';
   }
   function cmApi(path){return cmApiBase()+path}
+  function cmAccountToken(){
+    try{
+      var a=window.FANGYAN_ACCOUNT;
+      return a&&typeof a.token==='function'?(a.token()||''):'';
+    }catch(e){return ''}
+  }
+  function cmAuthHeader(){
+    var t=cmAccountToken();
+    return t?{'Authorization':'Bearer '+t}:{};
+  }
   function cmBoards(){
     var source=(window.FANGYAN_DATA&&FANGYAN_DATA.dialects)||window.DIALECTS||[];
     return source.map(function(d){
@@ -81,7 +91,7 @@
   }
   function cmWrite(path,init,retried){
     return cmEnsureSession().then(function(){
-      var headers=Object.assign({},init.headers||{},{'X-Client-Token':cmSession.token});
+      var headers=Object.assign({},init.headers||{},{'X-Client-Token':cmSession.token},cmAuthHeader());
       return fetch(cmApi(path),Object.assign({},init,{headers:headers,cache:'no-store'}));
     }).then(function(r){
       if(r.status===401&&!retried){
@@ -169,7 +179,10 @@
       cmRender(cmCurrent);
       return Promise.resolve(false);
     }
-    var headers=cmSessionValid(cmSession)?{'X-Client-Token':cmSession.token}:{'X-Client-Id':cmClientId};
+    var headers=Object.assign(
+      cmSessionValid(cmSession)?{'X-Client-Token':cmSession.token}:{'X-Client-Id':cmClientId},
+      cmAuthHeader()
+    );
     return fetch(cmApi('/api/community'),{cache:'no-store',headers:headers})
       .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
       .then(function(j){
@@ -223,11 +236,11 @@
       body:JSON.stringify(post)
     }).then(function(j){
       if(j&&j.post){
-        cmPosts.unshift(j.post);
+        if(!j.pending)cmPosts.unshift(j.post);
         if(j.deleteToken)cmRememberToken(j.post.id,j.deleteToken);
         cmRender(cmCurrent);
       }
-      return j&&j.post;
+      return j;
     });
   }
   function cmUploadAudio(file){
@@ -269,7 +282,7 @@
     });
   }
   function cmDeleteServer(id){
-    var headers={'X-Delete-Token':cmTokenFor(id)};
+    var headers=Object.assign({'X-Delete-Token':cmTokenFor(id)},cmAuthHeader());
     if(cmSession&&cmSession.token)headers['X-Client-Token']=cmSession.token;
     return fetch(cmApi('/api/community/'+encodeURIComponent(id)),{
       method:'DELETE',
@@ -280,6 +293,16 @@
       cmForgetToken(id);
       cmPosts=cmPosts.filter(function(p){return p.id!==id});
       cmRender(cmCurrent);
+    });
+  }
+  function cmReportServer(id,reason){
+    return cmWrite('/api/community/'+encodeURIComponent(id)+'/report',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({reason:reason})
+    }).then(function(j){
+      toast(j&&j.hidden?'已收到举报，留言已转入待审':'已收到举报，管理员会尽快处理');
+      return cmRefreshPosts();
     });
   }
   function cmRenderBoards(d){
@@ -308,7 +331,7 @@
     $('#cm-list').innerHTML=list.map(function(p){
       var type=CM_TYPES[p.type]||'家乡话';
       var color=(cmBoardById(p.board)||{}).color||'#B07C2A';
-      var canDelete=cmMode!=='server'||!!cmTokenFor(p.id);
+      var canDelete=cmMode!=='server'||!!cmTokenFor(p.id)||!!p.mine;
       var audio=(p.audio&&/^(data:audio\/|https?:\/\/)/.test(p.audio))?'<audio class="cm-audio-player" controls preload="metadata" src="'+cmEsc(p.audio)+'"></audio>':'';
       return '<article class="cm-post" data-id="'+cmEsc(p.id)+'">'+
         '<div class="cm-post-head"><span class="cm-avatar" style="--hc:'+cmEsc(color)+'">'+cmEsc((p.name||'乡').slice(0,1))+'</span>'+
@@ -318,7 +341,14 @@
         '<p class="cm-text">'+cmEsc(p.text)+'</p>'+audio+
         '<div class="cm-post-foot"><button type="button" class="cm-like'+(p.liked?' on':'')+'" data-like="'+cmEsc(p.id)+'">同乡呼应 <span>'+(p.likes||0)+'</span></button>'+
         '<button type="button" class="cm-reply-btn" data-reply="'+cmEsc(p.id)+'">接一句</button>'+
-        (canDelete?'<button type="button" class="cm-del" data-del="'+cmEsc(p.id)+'">删除</button>':'')+'</div></article>';
+        (cmMode==='server'?'<button type="button" class="cm-report" data-report="'+cmEsc(p.id)+'">举报</button>':'')+
+        (canDelete?'<button type="button" class="cm-del" data-del="'+cmEsc(p.id)+'">删除</button>':'')+'</div>'+
+        (cmMode==='server'?'<form class="cm-report-form" data-report-form="'+cmEsc(p.id)+'" hidden>'+
+          '<input type="text" maxlength="100" placeholder="举报原因（可选）：垃圾广告、诈骗、人身攻击…" aria-label="举报原因">'+
+          '<button type="submit" class="cm-report-submit">提交举报</button>'+
+          '<button type="button" class="cm-report-cancel" data-report-cancel>取消</button>'+
+        '</form>':'')+
+        '</article>';
     }).join('');
   }
   function cmRender(d){
@@ -397,6 +427,13 @@
     if(cmInitialized){cmRender(cmCurrent);return}
     cmInitialized=true;
 
+    window.addEventListener('fangyan:account',function(){
+      if(cmMode==='server')cmRefreshPosts();
+    });
+    window.addEventListener('fangyan:community-refresh',function(){
+      if(cmMode==='server')cmRefreshPosts();
+    });
+
     $('#cm-boards').addEventListener('click',function(e){
       var btn=e.target.closest('[data-board]');
       if(!btn)return;
@@ -447,6 +484,28 @@
         if(r)cmOpenForm({id:r.id,name:r.name||'匿名乡音'});
         return;
       }
+      var report=e.target.closest('[data-report]');
+      if(report){
+        var article=report.closest('.cm-post');
+        var form=article&&article.querySelector('[data-report-form]');
+        if(form){
+          var opening=form.hidden;
+          $$('[data-report-form]').forEach(function(f){if(f!==form)f.hidden=true});
+          form.hidden=!opening;
+          if(opening){var reasonInput=form.querySelector('input');if(reasonInput)reasonInput.focus()}
+        }
+        return;
+      }
+      var reportCancel=e.target.closest('[data-report-cancel]');
+      if(reportCancel){
+        var cancelForm=reportCancel.closest('[data-report-form]');
+        if(cancelForm){
+          cancelForm.hidden=true;
+          var cancelInput=cancelForm.querySelector('input');
+          if(cancelInput)cancelInput.value='';
+        }
+        return;
+      }
       var del=e.target.closest('[data-del]');
       if(del){
         if(!confirm('删除这条留言？删除后无法恢复。'))return;
@@ -460,6 +519,20 @@
         cmPosts=cmPosts.filter(function(p){return p.id!==delId});
         if(cmSave())cmRender(cmCurrent);
       }
+    });
+    $('#cm-list').addEventListener('submit',function(e){
+      var form=e.target.closest('[data-report-form]');
+      if(!form)return;
+      e.preventDefault();
+      var id=form.getAttribute('data-report-form');
+      var input=form.querySelector('input');
+      var reason=input?input.value.trim():'';
+      var submit=form.querySelector('.cm-report-submit');
+      if(submit){submit.disabled=true;submit.textContent='提交中…'}
+      cmReportServer(id,reason).catch(function(err){
+        toast((err&&err.message)||'举报失败，请稍后重试');
+        if(submit){submit.disabled=false;submit.textContent='提交举报'}
+      });
     });
     $('#cm-text').addEventListener('input',function(){
       $('#cm-count').textContent=this.value.length+' / 200';
@@ -509,6 +582,12 @@
       if(!cmCurrent)return;
       var text=$('#cm-text').value.trim();
       if(!text){$('#cm-status').textContent='请先写一句家乡话。';$('#cm-text').focus();return}
+      var consent=$('#cm-consent');
+      if(!consent||!consent.checked){
+        $('#cm-status').textContent='请先阅读并勾选同意隐私政策。';
+        if(consent)consent.focus();
+        return;
+      }
       var checked=document.querySelector('input[name="cm-type"]:checked');
       var post={
         board:cmCurrent.id,
@@ -518,15 +597,24 @@
         text:text,
         audio:cmAudio,
         audioName:cmAudioName,
-        replyTo:cmReply?cmReply.name:null
+        replyTo:cmReply?cmReply.name:null,
+        consent:true
       };
       var submit=$('#cm-submit');
       function done(){
         $('#cm-text').value='';
         $('#cm-count').textContent='0 / 200';
+        if(consent)consent.checked=false;
         cmCloseForm();
         cmSelectTab('all');
         cmRender(cmCurrent);
+      }
+      /* 蜜罐字段：正常用户看不见，机器人填写后静默丢弃 */
+      var honey=$('#cm-website');
+      if(honey&&honey.value){
+        done();
+        toast('已发布');
+        return;
       }
       if(cmMode==='server'){
         if(submit){submit.disabled=true;submit.textContent='发布中…'}
@@ -535,10 +623,10 @@
         upload.then(function(audioKey){
           if(audioKey){post.audio=null;post.audioKey=audioKey;}
           return cmPostServer(post);
-        }).then(function(saved){
-          if(!saved)throw new Error('发布失败');
+        }).then(function(res){
+          if(!res||!res.post)throw new Error('发布失败');
           done();
-          toast('已发布到实时社区');
+          toast(res.pending?(res.notice||'留言已进入待审队列'):'已发布到实时社区');
         }).catch(function(err){
           $('#cm-status').textContent=(err&&err.message)||'发布失败，请稍后重试';
         }).then(function(){

@@ -17,14 +17,20 @@ CREATE TABLE IF NOT EXISTS posts (
   created_at BIGINT NOT NULL,
   reply_to TEXT,
   owner_id TEXT,
+  user_id TEXT,
+  consent_at BIGINT,
   delete_token_hash TEXT,
   status TEXT NOT NULL DEFAULT 'visible'
 );
 
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS audio_key TEXT;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS user_id TEXT;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS consent_at BIGINT;
 
 CREATE INDEX IF NOT EXISTS idx_posts_board_created ON posts (board, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_created ON posts (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_status_created ON posts (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_user ON posts (user_id);
 
 CREATE TABLE IF NOT EXISTS post_likes (
   post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
@@ -34,6 +40,44 @@ CREATE TABLE IF NOT EXISTS post_likes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_post_likes_client ON post_likes (client_id);
+
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  username_key TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL DEFAULT '',
+  password_hash TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  consent_at BIGINT,
+  status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_created ON users (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry ON user_sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS reports (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  reporter_id TEXT NOT NULL,
+  reporter_user_id TEXT,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at BIGINT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  resolved_at BIGINT,
+  UNIQUE (post_id, reporter_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reports_status ON reports (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reports_post ON reports (post_id);
 
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,

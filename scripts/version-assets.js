@@ -11,7 +11,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const root = path.resolve(__dirname, '..');
-const pages = ['index.html', '方言学习页.html', 'fangyan-detail.html'];
+const pages = ['index.html', '方言学习页.html', 'fangyan-detail.html', 'privacy.html'];
 const assetRe = /((?:src|href)=")(assets\/[^"?#]+\.(?:js|css))(?:\?v=[^"#]*)?(")/g;
 const hashes = new Map();
 

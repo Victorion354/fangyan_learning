@@ -32,6 +32,19 @@ const FANGYAN_DATA = require('./assets/data/dialects.js');
 const { createStore } = require('./lib/store.js');
 const { createRedis } = require('./lib/redis.js');
 const { createObjectStore, audioExtension } = require('./lib/object-store.js');
+const { createModerator, parseKeywords } = require('./lib/moderation.js');
+const {
+  normalizeUsername,
+  validUsername,
+  passwordProblem,
+  hashPassword,
+  verifyPassword,
+  createSessionToken,
+  hashSessionToken,
+  newUserId,
+  publicUser,
+  DUMMY_PASSWORD_HASH
+} = require('./lib/accounts.js');
 
 const ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
@@ -71,6 +84,17 @@ const CLIENT_TOKEN_TTL_MS = (() => {
   if (!Number.isFinite(value) || value < 60000) return 24 * 60 * 60 * 1000;
   return Math.min(value, 30 * 24 * 60 * 60 * 1000);
 })();
+const USER_SESSION_TTL_MS = (() => {
+  const value = Number(process.env.USER_SESSION_TTL_MS);
+  if (!Number.isFinite(value) || value < 60000) return 30 * 24 * 60 * 60 * 1000;
+  return Math.min(value, 180 * 24 * 60 * 60 * 1000);
+})();
+const REPORT_HIDE_THRESHOLD = Math.max(1, Number(process.env.REPORT_HIDE_THRESHOLD) || 3);
+const moderator = createModerator({
+  enabled: String(process.env.MODERATION_ENABLED || '').toLowerCase() !== 'false',
+  extraKeywords: parseKeywords(process.env.MODERATION_KEYWORDS)
+});
+const POST_STATUSES = new Set(['visible', 'pending', 'hidden', 'removed']);
 
 const BOARDS = new Set(FANGYAN_DATA.dialects.map((d) => d.id));
 const TYPES = new Set(['dialect', 'suggest']);
@@ -185,6 +209,55 @@ function adminMatches(token) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+function userTokenFrom(req) {
+  const auth = String(req.headers.authorization || '').trim();
+  const match = /^Bearer\s+(.+)$/i.exec(auth);
+  if (match) return match[1].trim();
+  const header = String(req.headers['x-user-token'] || '').trim();
+  return header;
+}
+
+async function currentUser(req) {
+  const token = userTokenFrom(req);
+  if (!token || token.length > 512) return null;
+  /* 匿名会话令牌形如 v1.xxx.yyy，不可能对应账号会话，直接跳过数据库查询 */
+  if (token.startsWith('v1.')) return null;
+  const tokenHash = hashSessionToken(token);
+  const session = await store.getUserSession(tokenHash);
+  if (!session) return null;
+  return {
+    id: session.userId,
+    username: session.username,
+    displayName: session.displayName,
+    createdAt: session.createdAt,
+    tokenHash: tokenHash
+  };
+}
+
+function requireUser(account) {
+  if (!account) throw httpError(401, '请先登录账号');
+  return account;
+}
+
+function requireAdmin(req) {
+  if (!ADMIN_TOKEN) throw httpError(503, '服务端未配置 COMMUNITY_ADMIN_TOKEN');
+  const token = String(req.headers['x-admin-token'] || '').trim();
+  if (!adminMatches(token)) throw httpError(403, '管理员令牌无效');
+}
+
+async function issueUserSession(userId) {
+  const token = createSessionToken();
+  const now = Date.now();
+  const expiresAt = now + USER_SESSION_TTL_MS;
+  await store.createUserSession({
+    tokenHash: hashSessionToken(token),
+    userId: userId,
+    createdAt: now,
+    expiresAt: expiresAt
+  });
+  return { token: token, expiresAt: expiresAt };
+}
+
 function base64url(value) {
   return Buffer.from(value).toString('base64url');
 }
@@ -278,8 +351,10 @@ function loadCommunity() {
   }
 }
 
-function publicPost(post, clientId) {
+function publicPost(post, viewer) {
   if (!post) return null;
+  const clientId = typeof viewer === 'string' ? viewer : (viewer && viewer.clientId) || null;
+  const userId = viewer && typeof viewer === 'object' ? viewer.userId || null : null;
   const audio = post.audio || (
     post.audioKey && objectStore ? objectStore.publicUrl(post.audioKey) : null
   );
@@ -294,10 +369,22 @@ function publicPost(post, clientId) {
     audioName: post.audioName,
     likes: Math.max(0, Number(post.likes) || 0),
     liked: !!post.liked,
-    mine: !!(clientId && post.ownerId === clientId),
+    mine: !!((clientId && post.ownerId === clientId) || (userId && post.userId === userId)),
     createdAt: post.createdAt,
-    replyTo: post.replyTo
+    replyTo: post.replyTo,
+    status: post.status || 'visible'
   };
+}
+
+function adminPost(post) {
+  if (!post) return null;
+  return Object.assign(publicPost(post, null), {
+    status: post.status || 'visible',
+    reportCount: Math.max(0, Number(post.reportCount) || 0),
+    userId: post.userId || null,
+    audioKey: post.audioKey || null,
+    consentAt: Number(post.consentAt) || 0
+  });
 }
 
 function clientIdFrom(req, url) {
@@ -319,7 +406,11 @@ function requireClientId(req) {
   return payload.cid;
 }
 
-function normalizeNewPost(input, clientId) {
+function normalizeNewPost(input, clientId, account) {
+  if (input && input.website) throw httpError(400, '提交被拒绝');
+  if (!input || input.consent !== true) {
+    throw httpError(400, '请先阅读并同意隐私政策');
+  }
   const board = clean(input.board, 32);
   if (!BOARDS.has(board)) throw httpError(400, '方言板块不合法');
   const text = clean(input.text, 200);
@@ -343,11 +434,13 @@ function normalizeNewPost(input, clientId) {
     if (input.audio.length > MAX_AUDIO_CHARS) throw httpError(413, '语音太大，请控制在 1.5MB 以内');
     audio = input.audio;
   }
+  const now = Date.now();
+  const verdict = moderator.check(text);
   return {
     id: newId(),
     board: board,
     province: clean(input.province, 30),
-    name: clean(input.name, 20) || '匿名乡音',
+    name: clean(input.name, 20) || (account && (account.displayName || account.username)) || '匿名乡音',
     type: TYPES.has(input.type) ? input.type : 'dialect',
     text: text,
     audio: audio,
@@ -355,9 +448,13 @@ function normalizeNewPost(input, clientId) {
     audioName: clean(input.audioName, 80),
     likes: 0,
     likedBy: [],
-    createdAt: Date.now(),
+    createdAt: now,
+    consentAt: now,
     replyTo: clean(input.replyTo, 40) || null,
     ownerId: clientId || null,
+    userId: account ? account.id : null,
+    status: verdict.ok ? 'visible' : 'pending',
+    moderation: verdict,
     deleteTokenHash: null
   };
 }
@@ -476,8 +573,8 @@ function setCors(req, res) {
   const origin = resolveCorsOrigin(req);
   if (!origin) return null;
   res.setHeader('Access-Control-Allow-Origin', origin);
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Client-Id, X-Client-Token, X-Delete-Token, X-Admin-Token');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Client-Id, X-Client-Token, X-User-Token, X-Delete-Token, X-Admin-Token');
   res.setHeader('Access-Control-Max-Age', '86400');
   addVary(res, 'Origin');
   return origin;
@@ -587,6 +684,8 @@ async function handleApi(req, res, url) {
   const pathname = url.pathname;
   const method = req.method || 'GET';
   const clientId = viewerIdFrom(req, url);
+  const account = await currentUser(req);
+  const viewer = { clientId: clientId, userId: account ? account.id : null };
 
   if (method === 'OPTIONS') {
     res.writeHead(204);
@@ -607,6 +706,85 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  /* ===== 账号：注册 / 登录 / 退出 / 当前用户 ===== */
+
+  if (pathname === '/api/auth/register' && method === 'POST') {
+    await rateLimit(req, 'register', 10, 600000);
+    const body = await readBody(req);
+    const username = clean(body.username, 32);
+    if (!validUsername(username)) {
+      throw httpError(400, '用户名需为 2–24 位中文、字母、数字、下划线或短横线');
+    }
+    const problem = passwordProblem(body.password);
+    if (problem) throw httpError(400, problem);
+    if (body.consent !== true) throw httpError(400, '注册前请阅读并同意隐私政策');
+    const usernameKey = normalizeUsername(username);
+    if (await store.getUserByUsernameKey(usernameKey)) {
+      throw httpError(409, '用户名已被占用');
+    }
+    const now = Date.now();
+    let user;
+    try {
+      user = await store.createUser({
+        id: newUserId(),
+        username: username,
+        usernameKey: usernameKey,
+        displayName: clean(body.displayName, 20) || username,
+        passwordHash: await hashPassword(String(body.password)),
+        createdAt: now,
+        consentAt: now
+      });
+    } catch (err) {
+      if (/unique|duplicate|UNIQUE/i.test(String(err.message))) {
+        throw httpError(409, '用户名已被占用');
+      }
+      throw err;
+    }
+    const session = await issueUserSession(user.id);
+    sendJson(res, 201, {
+      user: publicUser(user),
+      token: session.token,
+      expiresAt: session.expiresAt
+    });
+    return;
+  }
+
+  if (pathname === '/api/auth/login' && method === 'POST') {
+    await rateLimit(req, 'login', 20, 600000);
+    const body = await readBody(req);
+    const usernameKey = normalizeUsername(body.username);
+    const password = String(body.password == null ? '' : body.password);
+    const user = usernameKey ? await store.getUserByUsernameKey(usernameKey) : null;
+    let ok = false;
+    if (user && user.status === 'active') {
+      ok = await verifyPassword(password, user.passwordHash);
+    } else {
+      /* 账号不存在也执行一次哈希，避免通过耗时枚举用户名 */
+      await verifyPassword(password, DUMMY_PASSWORD_HASH);
+    }
+    if (!ok) throw httpError(401, '用户名或密码不正确');
+    const session = await issueUserSession(user.id);
+    sendJson(res, 200, {
+      user: publicUser(user),
+      token: session.token,
+      expiresAt: session.expiresAt
+    });
+    return;
+  }
+
+  if (pathname === '/api/auth/logout' && method === 'POST') {
+    const token = userTokenFrom(req);
+    if (token) await store.deleteUserSession(hashSessionToken(token));
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (pathname === '/api/auth/me' && method === 'GET') {
+    const me = requireUser(account);
+    sendJson(res, 200, { user: publicUser(me) });
+    return;
+  }
+
   if (pathname === '/api/health' && method === 'GET') {
     sendJson(res, 200, {
       ok: true,
@@ -619,7 +797,10 @@ async function handleApi(req, res, url) {
         store: store.driver || 'sqlite',
         redis: !!redis,
         objectStorage: !!objectStore,
-        uploads: objectStore ? 'presigned' : 'inline'
+        uploads: objectStore ? 'presigned' : 'inline',
+        accounts: true,
+        moderation: moderator.enabled,
+        reports: true
       }
     });
     return;
@@ -629,7 +810,7 @@ async function handleApi(req, res, url) {
     const board = url.searchParams.get('board');
     const list = await store.list(board && BOARDS.has(board) ? board : null, clientId);
     sendJson(res, 200, {
-      posts: list.map((p) => publicPost(p, clientId)),
+      posts: list.map((p) => publicPost(p, viewer)),
       serverTime: Date.now()
     });
     return;
@@ -673,12 +854,18 @@ async function handleApi(req, res, url) {
     await rateLimit(req, 'post', 20, 60000);
     const authorId = requireClientId(req);
     const body = await readBody(req);
-    const post = normalizeNewPost(body, authorId);
+    const post = normalizeNewPost(body, authorId, account);
     const deleteToken = crypto.randomBytes(24).toString('hex');
     post.deleteTokenHash = hashToken(deleteToken);
     const saved = await store.create(post);
     await broadcastRefresh();
-    sendJson(res, 201, { post: publicPost(saved, authorId), deleteToken });
+    const pending = saved.status !== 'visible';
+    sendJson(res, 201, {
+      post: publicPost(saved, { clientId: authorId, userId: account ? account.id : null }),
+      deleteToken: deleteToken,
+      pending: pending,
+      notice: pending ? '留言已进入待审队列，管理员审核通过后会公开显示。' : ''
+    });
     return;
   }
 
@@ -690,7 +877,9 @@ async function handleApi(req, res, url) {
     const post = await store.setLike(likeMatch[1], likerId, body.liked === true);
     if (!post) throw httpError(404, '留言不存在');
     await broadcastRefresh();
-    sendJson(res, 200, { post: publicPost(post, likerId) });
+    sendJson(res, 200, {
+      post: publicPost(post, { clientId: likerId, userId: account ? account.id : null })
+    });
     return;
   }
 
@@ -701,8 +890,10 @@ async function handleApi(req, res, url) {
     if (!post) throw httpError(404, '留言不存在');
     const deleteToken = String(req.headers['x-delete-token'] || '').trim();
     const adminToken = String(req.headers['x-admin-token'] || '').trim();
-    const allowed = tokenMatches(deleteToken, post.deleteTokenHash) || adminMatches(adminToken);
-    if (!allowed) throw httpError(403, '没有删除权限：需要发布时保存的删除令牌');
+    const allowed = tokenMatches(deleteToken, post.deleteTokenHash) ||
+      adminMatches(adminToken) ||
+      !!(account && post.userId === account.id);
+    if (!allowed) throw httpError(403, '没有删除权限：需要发布时保存的删除令牌，或登录发布账号');
     await store.remove(post.id);
     if (post.audioKey && objectStore) {
       objectStore.remove(post.audioKey).catch((err) => {
@@ -711,6 +902,171 @@ async function handleApi(req, res, url) {
     }
     await broadcastRefresh();
     sendJson(res, 200, { ok: true, id: deleteMatch[1] });
+    return;
+  }
+
+  /* ===== 举报 ===== */
+
+  const reportMatch = pathname.match(/^\/api\/community\/([A-Za-z0-9_-]{1,64})\/report$/);
+  if (reportMatch && method === 'POST') {
+    await rateLimit(req, 'report', 30, 60000);
+    const reporterClientId = requireClientId(req);
+    const body = await readBody(req);
+    const post = await store.get(reportMatch[1], null);
+    if (!post) throw httpError(404, '留言不存在');
+    if (post.status !== 'visible') throw httpError(409, '这条留言当前不在公开列表中');
+    const reporterId = account ? 'u_' + account.id : 'c_' + reporterClientId;
+    const result = await store.createReport({
+      id: 'r' + Date.now().toString(36) + crypto.randomBytes(4).toString('hex'),
+      postId: post.id,
+      reporterId: reporterId,
+      reporterUserId: account ? account.id : null,
+      reason: clean(body.reason, 200) || '未填写原因',
+      createdAt: Date.now()
+    });
+    if (!result.created) throw httpError(409, '你已经举报过这条留言');
+    const openReports = await store.countOpenReports(post.id);
+    let hidden = false;
+    if (openReports >= REPORT_HIDE_THRESHOLD && post.status === 'visible') {
+      hidden = await store.setStatus(post.id, 'pending');
+      if (hidden) await broadcastRefresh();
+    }
+    sendJson(res, 201, {
+      ok: true,
+      reportId: result.report.id,
+      openReports: openReports,
+      hidden: hidden
+    });
+    return;
+  }
+
+  /* ===== 账号数据权利：导出 / 注销 ===== */
+
+  if (pathname === '/api/me/export' && method === 'GET') {
+    await rateLimit(req, 'export', 10, 600000);
+    const me = requireUser(account);
+    const user = await store.getUserById(me.id);
+    if (!user) throw httpError(401, '账号不存在');
+    const posts = await store.listByUser(me.id);
+    const reports = await store.listReportsByUser(me.id);
+    sendJson(res, 200, {
+      exportedAt: new Date().toISOString(),
+      user: publicUser(user),
+      posts: posts.map((p) => Object.assign(
+        publicPost(p, { clientId: null, userId: me.id }),
+        { status: p.status, reportCount: p.reportCount }
+      )),
+      reports: reports.map((r) => ({
+        id: r.id,
+        postId: r.postId,
+        reason: r.reason,
+        status: r.status,
+        createdAt: r.createdAt
+      }))
+    });
+    return;
+  }
+
+  if (pathname === '/api/account' && method === 'DELETE') {
+    await rateLimit(req, 'account', 5, 600000);
+    const me = requireUser(account);
+    const body = await readBody(req);
+    const user = await store.getUserById(me.id);
+    if (!user) throw httpError(401, '账号不存在');
+    const password = String(body.password == null ? '' : body.password);
+    if (!(await verifyPassword(password, user.passwordHash))) {
+      throw httpError(403, '密码不正确，无法注销账号');
+    }
+    const removed = await store.deleteUserData(me.id);
+    for (const key of removed.audioKeys) {
+      if (objectStore) {
+        objectStore.remove(key).catch((err) => {
+          console.warn('注销账号时删除语音对象失败：' + err.message);
+        });
+      }
+    }
+    await broadcastRefresh();
+    sendJson(res, 200, {
+      ok: true,
+      deletedPosts: removed.postIds.length,
+      deletedAudio: removed.audioKeys.length
+    });
+    return;
+  }
+
+  /* ===== 管理员：概览 / 留言 / 举报 ===== */
+
+  if (pathname === '/api/admin/overview' && method === 'GET') {
+    requireAdmin(req);
+    sendJson(res, 200, {
+      users: await store.countUsers(),
+      posts: await store.countAll(),
+      byStatus: await store.countByStatus(),
+      openReports: await store.countOpenReports()
+    });
+    return;
+  }
+
+  if (pathname === '/api/admin/posts' && method === 'GET') {
+    requireAdmin(req);
+    const status = url.searchParams.get('status') || 'all';
+    if (status !== 'all' && !POST_STATUSES.has(status)) {
+      throw httpError(400, '留言状态不合法');
+    }
+    const posts = await store.listAdmin({
+      status: status === 'all' ? '' : status,
+      limit: url.searchParams.get('limit')
+    });
+    sendJson(res, 200, { posts: posts.map(adminPost) });
+    return;
+  }
+
+  const adminPostMatch = pathname.match(/^\/api\/admin\/posts\/([A-Za-z0-9_-]{1,64})$/);
+  if (adminPostMatch && (method === 'PATCH' || method === 'POST')) {
+    requireAdmin(req);
+    const body = await readBody(req);
+    if (!POST_STATUSES.has(body.status)) throw httpError(400, '留言状态不合法');
+    const changed = await store.setStatus(adminPostMatch[1], body.status);
+    if (!changed) throw httpError(404, '留言不存在');
+    await broadcastRefresh();
+    sendJson(res, 200, {
+      ok: true,
+      post: adminPost(await store.get(adminPostMatch[1], null))
+    });
+    return;
+  }
+
+  if (pathname === '/api/admin/reports' && method === 'GET') {
+    requireAdmin(req);
+    const status = url.searchParams.get('status') || 'open';
+    if (status !== 'all' && !['open', 'resolved', 'dismissed'].includes(status)) {
+      throw httpError(400, '举报状态不合法');
+    }
+    const reports = await store.listReports({
+      status: status === 'all' ? '' : status,
+      limit: url.searchParams.get('limit')
+    });
+    sendJson(res, 200, { reports: reports });
+    return;
+  }
+
+  const adminReportMatch = pathname.match(/^\/api\/admin\/reports\/([A-Za-z0-9_-]{1,64})$/);
+  if (adminReportMatch && method === 'POST') {
+    requireAdmin(req);
+    const body = await readBody(req);
+    const action = body.action === 'dismiss'
+      ? 'dismissed'
+      : (body.action === 'resolve' ? 'resolved' : '');
+    if (!action) throw httpError(400, '处理动作不合法');
+    const report = await store.getReport(adminReportMatch[1]);
+    if (!report) throw httpError(404, '举报不存在');
+    await store.resolveReport(report.id, action);
+    let hidden = false;
+    if (action === 'resolved' && body.hidePost === true) {
+      hidden = await store.setStatus(report.postId, 'hidden');
+      await broadcastRefresh();
+    }
+    sendJson(res, 200, { ok: true, hidden: hidden });
     return;
   }
 
@@ -919,6 +1275,13 @@ async function start() {
   const imported = await store.importLegacy(loadCommunity());
   if (imported > 0) {
     console.log('已从 community.json 导入 ' + imported + ' 条留言到 ' + (store.driver === 'postgres' ? 'PostgreSQL' : 'SQLite'));
+  }
+
+  try {
+    const pruned = await store.pruneUserSessions(Date.now());
+    if (pruned > 0) console.log('已清理 ' + pruned + ' 个过期登录会话');
+  } catch (err) {
+    console.warn('清理过期登录会话失败：' + err.message);
   }
 
   server = createHttpServer();
