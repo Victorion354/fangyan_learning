@@ -1078,8 +1078,28 @@ async function handleApi(req, res, url) {
   throw httpError(404, '接口不存在');
 }
 
-const PRIVATE_FILES = new Set(['/server.js', '/readme.md', '/package.json', '/package-lock.json', '/.gitignore', '/.env']);
-const PRIVATE_DIRS = ['/data', '/.git', '/_backup', '/_shots', '/node_modules'];
+const PRIVATE_FILES = new Set([
+  '/server.js',
+  '/readme.md',
+  '/package.json',
+  '/package-lock.json',
+  '/dockerfile',
+  '/docker-compose.yml',
+  '/.gitignore',
+  '/.dockerignore',
+  '/.env'
+]);
+const PRIVATE_DIRS = [
+  '/data',
+  '/db',
+  '/deploy',
+  '/lib',
+  '/tests',
+  '/scripts',
+  '/node_modules',
+  '/.git',
+  '/.github'
+];
 
 function isPrivatePath(pathname) {
   const p = pathname.toLowerCase();

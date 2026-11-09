@@ -22,7 +22,7 @@
 	}
 
 	handle {
-		@private path /data/* /db/* /deploy/* /lib/* /tests/* /scripts/* /_backup/* /_shots/* /node_modules/* /server.js /package.json /package-lock.json /Dockerfile /docker-compose.yml /README.md /readme.md /.git/* /.github/* /.env* /.dockerignore
+		@private path /data/* /db/* /deploy/* /lib/* /tests/* /scripts/* /node_modules/* /server.js /package.json /package-lock.json /Dockerfile /docker-compose.yml /README.md /readme.md /.git/* /.github/* /.env* /.dockerignore
 		respond @private 404
 
 		root * /srv
@@ -44,6 +44,6 @@
 	@images path /assets/*.webp /assets/*.jpg /assets/*.png /assets/*.svg
 	header @images Cache-Control "public, max-age=604800"
 
-	@html path / /index.html /fangyan-detail.html /方言学习页.html
+	@html path / /index.html /fangyan-detail.html /方言学习页.html /privacy.html /data.html /action.html /methods.html
 	header @html Cache-Control "no-cache"
 }

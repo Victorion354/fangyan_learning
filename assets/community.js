@@ -13,6 +13,11 @@
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
     });
   }
+  function cmInvalid(el,on){
+    if(!el)return;
+    if(on)el.setAttribute('aria-invalid','true');
+    else el.removeAttribute('aria-invalid');
+  }
   function cmApiBase(){
     var c=window.FANGYAN_CONFIG||{};
     if(c.apiBase)return String(c.apiBase).replace(/\/$/,'');
@@ -399,6 +404,8 @@
     $('#cm-reply').hidden=!cmReply;
     if(cmReply)$('#cm-reply-name').textContent=cmReply.name;
     $('#cm-status').textContent='';
+    cmInvalid($('#cm-text'),false);
+    cmInvalid($('#cm-consent'),false);
     setTimeout(function(){$('#cm-text').focus()},60);
   }
   function cmCloseForm(){
@@ -536,6 +543,10 @@
     });
     $('#cm-text').addEventListener('input',function(){
       $('#cm-count').textContent=this.value.length+' / 200';
+      if(this.value.trim())cmInvalid(this,false);
+    });
+    $('#cm-consent').addEventListener('change',function(){
+      if(this.checked)cmInvalid(this,false);
     });
     $('#cm-audio').addEventListener('change',function(){
       var file=this.files&&this.files[0];
@@ -581,13 +592,21 @@
       e.preventDefault();
       if(!cmCurrent)return;
       var text=$('#cm-text').value.trim();
-      if(!text){$('#cm-status').textContent='请先写一句家乡话。';$('#cm-text').focus();return}
+      if(!text){
+        $('#cm-status').textContent='请先写一句家乡话。';
+        cmInvalid($('#cm-text'),true);
+        $('#cm-text').focus();
+        return;
+      }
+      cmInvalid($('#cm-text'),false);
       var consent=$('#cm-consent');
       if(!consent||!consent.checked){
         $('#cm-status').textContent='请先阅读并勾选同意隐私政策。';
+        cmInvalid(consent,true);
         if(consent)consent.focus();
         return;
       }
+      cmInvalid(consent,false);
       var checked=document.querySelector('input[name="cm-type"]:checked');
       var post={
         board:cmCurrent.id,

@@ -333,9 +333,11 @@ function renderWords(){
   var d = DIALECTS.filter(function(x){return x.id===curDialect})[0];
   var words = WORDS[curDialect];
   $('#v-cards').innerHTML = words.map(function(w,i){
+    var fav=!!(window.FANGYAN_LEARN&&window.FANGYAN_LEARN.isFavorite(curDialect,i));
     return '<div class="vcard" data-i="'+i+'" role="button" tabindex="0" aria-pressed="false" data-label="'+w.w+'，'+w.std+'" aria-label="'+w.w+'，'+w.std+'，未翻面，按下查看释义">'+
       '<div class="vcard-in">'+
         '<div class="vface vfront" style="--c:'+d.color+'">'+
+          '<button type="button" class="vfav'+(fav?' on':'')+'" title="'+(fav?'取消收藏':'收藏这个词')+'" aria-label="'+(fav?'取消收藏':'收藏')+w.w+'" aria-pressed="'+(fav?'true':'false')+'" data-fav="'+i+'">'+(fav?'★':'☆')+'</button>'+
           '<button type="button" class="vplay" title="试听（普通话合成音）" aria-label="试听'+w.w+'（普通话合成音）" data-t="'+w.w+'"><span class="b"><i></i><i></i><i></i></span></button>'+
           '<p class="vt">'+d.name+' · 常用词</p>'+
           '<div class="vw">'+w.w+'</div>'+
@@ -352,18 +354,34 @@ function renderWords(){
     '</div>';
   }).join('');
   $$('#v-cards .vcard').forEach(function(card){
+    var i=Number(card.getAttribute('data-i'));
+    var w=words[i]||{};
     function setFlip(on){
       card.classList.toggle('flipped',on);
       card.setAttribute('aria-pressed',on?'true':'false');
       card.setAttribute('aria-label',card.getAttribute('data-label')+(on?'，已翻面，按下返回正面':'，未翻面，按下查看释义'));
+      if(on&&window.FANGYAN_LEARN)window.FANGYAN_LEARN.markLearned(curDialect,i,w.w,w.std);
     }
-    card.addEventListener('click',function(e){if(e.target.closest('.vplay'))return;setFlip(!card.classList.contains('flipped'))});
+    card.addEventListener('click',function(e){if(e.target.closest('.vplay')||e.target.closest('.vfav'))return;setFlip(!card.classList.contains('flipped'))});
     card.addEventListener('keydown',function(e){
       if(e.target!==card)return;
       if(e.key==='Enter'||e.key===' '){e.preventDefault();setFlip(!card.classList.contains('flipped'));}
     });
     var btn=$('.vplay',card);
     btn.addEventListener('click',function(e){e.stopPropagation();speak(btn.getAttribute('data-t')||'',btn)});
+    var fav=$('.vfav',card);
+    if(fav&&window.FANGYAN_LEARN){
+      fav.addEventListener('click',function(e){
+        e.stopPropagation();
+        var on=window.FANGYAN_LEARN.toggleFavorite(curDialect,i,w.w,w.std,w.py);
+        fav.classList.toggle('on',on);
+        fav.textContent=on?'★':'☆';
+        fav.setAttribute('aria-pressed',on?'true':'false');
+        fav.setAttribute('aria-label',(on?'取消收藏':'收藏')+w.w);
+        fav.setAttribute('title',on?'取消收藏':'收藏这个词');
+        toast(on?'已收藏「'+w.w+'」，可在「我的学习」复习':'已取消收藏');
+      });
+    }
   });
 }
 function selectDialect(id){
@@ -415,6 +433,7 @@ function answer(sel){
   var right = sel===q.answer;
   if(right){qScore++;opts[q.answer].classList.add('correct')}
   else{opts[q.answer].classList.add('correct');opts[sel].classList.add('wrong')}
+  if(window.FANGYAN_LEARN)window.FANGYAN_LEARN.recordAnswer({quizIndex:qIdx,correct:right,choice:sel,at:Date.now()});
   var fb=$('#q-feedback');
   fb.innerHTML='<b>'+ (right?'答对啦 ✓':'答错啦，正确答案是 '+q.options[q.answer]) +'</b>'+q.why;
   fb.classList.add('show');
@@ -432,6 +451,7 @@ function nextQ(){
 function showResult(){
   $('#q-stage').textContent='测验完成';
   $('#q-progress').innerHTML=QUIZ.map(function(){return '<i class="done"></i>'}).join('');
+  if(window.FANGYAN_LEARN)window.FANGYAN_LEARN.recordAttempt({score:qScore,total:QUIZ.length,at:Date.now()});
   var msg = qScore===QUIZ.length?'全对！你是方言行家':qScore>=7?'不错，耳朵很灵':'再听几遍，方言耳朵会慢慢练出来';
   $('#q-body').innerHTML='<div class="q-result show">'+
     '<div class="r-num">'+qScore+' / '+QUIZ.length+'</div>'+
@@ -457,7 +477,7 @@ function observeRVs(){
 }
 (function(){
   var links=$$('.nav-links a');
-  var secs=['dian','words','dui','quiz','facts','community'].map(function(id){return document.getElementById(id)});
+  var secs=['dian','words','dui','quiz','facts','mine','community'].map(function(id){return document.getElementById(id)});
   if('IntersectionObserver' in window){
     var io=new IntersectionObserver(function(es){
       es.forEach(function(e){ if(e.isIntersecting){ links.forEach(function(a){a.style.opacity = a.getAttribute('href')==='#'+e.target.id?'1':'.82'}); } });

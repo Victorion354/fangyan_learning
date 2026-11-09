@@ -29,10 +29,12 @@
 <link rel="dns-prefetch" href="https://t3.tianditu.gov.cn">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23B23A30'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' fill='%23f7f0e6' font-family='serif'%3E%E8%A8%80%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/detail.css?v=081a9f847e">
+<link rel="stylesheet" href="assets/nav.css?v=5de2c6ef16">
 </head>
 <body>
+<a class="skip-link" href="#main">跳到主要内容</a>
 <noscript><div style="padding:18px 24px;text-align:center;background:#2B2C35;color:#F1EAE0;font-size:14px">本页需要启用 JavaScript 才能显示方言内容。</div></noscript>
-<nav class="nav">
+<nav class="nav nav-detail nav-light" aria-label="主导航">
   <div class="nav-in">
     <a class="brand" href="方言学习页.html"><span class="mark">言</span><span>一声一味<small>· 方言图鉴</small></span></a>
     <div class="nav-right">
@@ -72,7 +74,7 @@
   </div>
 </nav>
 
-<main>
+<main id="main">
   <section class="sec" id="hist">
     <div class="wrap">
       <div class="sec-head rv"><span class="k">史</span><span class="lbl">发展脉络</span><h2 id="hist-title"></h2><p id="hist-lead"></p></div>
@@ -153,9 +155,9 @@
 
 <footer class="footer">
   <div class="fn">一声一味 · 方言图鉴</div>
-  <p>这是一个<strong>设计展示原型</strong>：方言历史、地区与风俗为资料性整理，使用人口数据引自《中国语言地图集》第 2 版，发音与用词为近似标注。所有信息仅用于演示与参考。</p>
+  <p>这是一个<strong>可运行的参赛版 MVP</strong>：方言历史、地区与风俗为资料性整理，使用人口数据引自《中国语言地图集》第 2 版，发音与用词为近似标注。所有信息用于演示与参考，能力边界见<a href="methods.html">数据与方法</a>。</p>
   <p>数据来源：中国社会科学院语言研究所等《中国语言地图集》第 2 版（2012，人口依据 2004 年资料）、Ethnologue（2024）、中国语言文字使用情况调查（2004 公布）；行政边界数据来自 DataV GeoJSON（简化）。</p>
-  <p>地图：在线底图来自天地图（国家地理信息公共服务平台），标准地图数据审图号 GS(2024)0650号；离线示意边界来自 DataV GeoJSON（简化）。方言区界线为近似示意，不作为国界或行政区划依据。乡音社区已集中到<a href="方言学习页.html#community">主页面</a>，启动本地服务时会保存到本机 <code>data/community.json</code>，未启动时只保存在本机浏览器。</p>
+  <p>地图：在线底图来自天地图（国家地理信息公共服务平台），标准地图数据审图号 GS(2024)0650号；离线示意边界来自 DataV GeoJSON（简化）。方言区界线为近似示意，不作为国界或行政区划依据。乡音社区已集中到<a href="方言学习页.html#community">主页面</a>，启动本地服务时保存到 SQLite（<code>data/community.sqlite</code>），配置 <code>DATABASE_URL</code> 后改用 PostgreSQL；未启动服务时只保存在本机浏览器。</p>
   <p>人言乡音：仅接入许可清晰的录音，逐条标注作者、许可与来源；没有授权录音的方言会显示“暂无授权录音”。发音按钮为浏览器普通话合成音，并非方言真实读音。</p>
   <div class="bar">© 2026 一声一味 · 中国十大方言</div>
 </footer>
@@ -164,10 +166,11 @@
 
 <script src="assets/config.js?v=e9674f9c85"></script>
 <script src="assets/mapdata.js?v=3ea7a0b7d7"></script>
-<script src="assets/chinageo.js?v=ceca6f8bc9"></script>
+<script src="assets/chinageo.js?v=0cd73288a6"></script>
 <script src="assets/audio/manifest.js?v=095bfe019b"></script>
 <script src="assets/data/dialects.js?v=bcafd9f291"></script>
 <script src="assets/detail.js?v=c01f16684d"></script>
+<script src="assets/nav.js?v=e5dcdb0c00"></script>
 
 </body>
 </html>

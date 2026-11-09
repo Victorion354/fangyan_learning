@@ -85,6 +85,12 @@
     el.className = 'cm-status' + (tone ? ' ' + tone : '');
   }
 
+  function markInvalid(el, on) {
+    if (!el) return;
+    if (on) el.setAttribute('aria-invalid', 'true');
+    else el.removeAttribute('aria-invalid');
+  }
+
   function setMode(next) {
     mode = next;
     var form = document.getElementById('cm-account-form');
@@ -107,6 +113,9 @@
     if (!form) return;
     form.hidden = false;
     setMode(mode);
+    markInvalid(document.getElementById('cm-account-username'), false);
+    markInvalid(document.getElementById('cm-account-password'), false);
+    markInvalid(document.getElementById('cm-account-consent'), false);
     var input = document.getElementById('cm-account-username');
     if (input) input.focus();
   }
@@ -154,13 +163,19 @@
   function submit(event) {
     event.preventDefault();
     if (busy) return;
-    var username = (document.getElementById('cm-account-username').value || '').trim();
-    var password = document.getElementById('cm-account-password').value || '';
+    var usernameInput = document.getElementById('cm-account-username');
+    var passwordInput = document.getElementById('cm-account-password');
+    var consentInput = document.getElementById('cm-account-consent');
+    var username = (usernameInput.value || '').trim();
+    var password = passwordInput.value || '';
     var displayName = (document.getElementById('cm-account-display').value || '').trim();
-    var consent = document.getElementById('cm-account-consent').checked;
-    if (!username) { setStatus('请填写用户名'); return; }
-    if (!password) { setStatus('请填写密码'); return; }
-    if (mode === 'register' && !consent) { setStatus('注册前请勾选同意隐私政策'); return; }
+    var consent = consentInput.checked;
+    if (!username) { markInvalid(usernameInput, true); setStatus('请填写用户名', 'bad'); usernameInput.focus(); return; }
+    markInvalid(usernameInput, false);
+    if (!password) { markInvalid(passwordInput, true); setStatus('请填写密码', 'bad'); passwordInput.focus(); return; }
+    markInvalid(passwordInput, false);
+    if (mode === 'register' && !consent) { markInvalid(consentInput, true); setStatus('注册前请勾选同意隐私政策', 'bad'); consentInput.focus(); return; }
+    markInvalid(consentInput, false);
 
     var submitBtn = document.getElementById('cm-account-submit');
     busy = true;
@@ -190,7 +205,7 @@
       document.getElementById('cm-account-password').value = '';
       toast(mode === 'register' ? '注册成功，已登录' : '已登录');
     }).catch(function (err) {
-      setStatus((err && err.message) || '操作失败，请稍后重试');
+      setStatus((err && err.message) || '操作失败，请稍后重试', 'bad');
     }).then(function () {
       busy = false;
       if (submitBtn) {
@@ -305,6 +320,12 @@
     if (toggle) toggle.addEventListener('click', openForm);
     if (close) close.addEventListener('click', closeForm);
     if (form) form.addEventListener('submit', submit);
+    var usernameInput = document.getElementById('cm-account-username');
+    var passwordInput = document.getElementById('cm-account-password');
+    var consentInput = document.getElementById('cm-account-consent');
+    if (usernameInput) usernameInput.addEventListener('input', function () { markInvalid(usernameInput, false); });
+    if (passwordInput) passwordInput.addEventListener('input', function () { markInvalid(passwordInput, false); });
+    if (consentInput) consentInput.addEventListener('change', function () { markInvalid(consentInput, false); });
     if (switcher) switcher.addEventListener('click', function () {
       setMode(mode === 'register' ? 'login' : 'register');
     });

@@ -22,12 +22,15 @@
 <meta name="twitter:image" content="assets/beijing.jpg">
 <meta name="twitter:image:alt" content="官话地域印象">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23B23A30'/%3E%3Cpath d='M20 44h24M24 34h16M27 24h10' stroke='%23F1EAE0' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="assets/main.css?v=97403b0648">
+<link rel="stylesheet" href="assets/main.css?v=04682dc16b">
+<link rel="stylesheet" href="assets/nav.css?v=5de2c6ef16">
 <link rel="stylesheet" href="assets/community.css?v=0363277369">
+<link rel="stylesheet" href="assets/learn.css?v=93b18d1072">
 </head>
 <body>
+<a class="skip-link" href="#main">跳到主要内容</a>
 <noscript><div style="padding:18px 24px;text-align:center;background:#2B2C35;color:#F1EAE0;font-size:14px">本页需要启用 JavaScript 才能显示方言内容。</div></noscript>
-<nav class="nav">
+<nav class="nav nav-main" aria-label="主导航">
   <div class="nav-in">
     <a class="brand" href="#top"><span class="mark">言</span><span>一声一味<small>· 十大方言</small></span></a>
     <ul class="nav-links">
@@ -36,6 +39,9 @@
       <li><a href="#dui">同一句话</a></li>
       <li><a href="#quiz">方言辨识</a></li>
       <li><a href="#facts">冷知识</a></li>
+      <li><a href="#mine">我的学习</a></li>
+      <li><a href="data.html">数据观察</a></li>
+      <li><a href="action.html">保护行动</a></li>
       <li><a href="#community">乡音社区</a></li>
     </ul>
   </div>
@@ -59,7 +65,7 @@
   <div class="eq" aria-hidden="true" id="eq"></div>
 </header>
 
-<main>
+<main id="main">
   <!-- ===== 十大方言 ===== -->
   <section class="sec" id="dian">
     <div class="wrap">
@@ -169,6 +175,20 @@
     </div>
   </section>
 
+  <!-- ===== 我的学习 ===== -->
+  <section class="sec" id="mine">
+    <div class="wrap">
+      <div class="sec-head rv">
+        <div class="eyebrow"><span class="seal">我</span>我的学习</div>
+        <h2>把学过的<span class="kw">乡音留下来</span></h2>
+        <p>收藏词汇、辨识错题和测验记录只保存在这台浏览器里，不上传服务端。登录账号后，这里还会汇总你名下的留言与举报；未登录时只显示本机留言。你可以随时导出或清空学习记录。</p>
+      </div>
+      <div class="learn-panel rv" id="learn-panel" aria-live="polite">
+        <p class="learn-loading">正在读取本机学习记录…</p>
+      </div>
+    </div>
+  </section>
+
   <!-- ===== 乡音社区 ===== -->
   <section class="sec" id="community">
     <div class="wrap">
@@ -198,12 +218,12 @@
             <button type="button" class="cm-close" id="cm-account-close" aria-label="关闭账号表单">×</button>
           </div>
           <div class="cm-row">
-            <label class="cm-field"><span>用户名</span><input id="cm-account-username" type="text" maxlength="24" autocomplete="username" placeholder="2–24 位中文、字母、数字或下划线" required></label>
-            <label class="cm-field"><span>密码</span><input id="cm-account-password" type="password" maxlength="72" autocomplete="current-password" placeholder="至少 8 位" required></label>
+            <label class="cm-field"><span>用户名</span><input id="cm-account-username" type="text" maxlength="24" autocomplete="username" placeholder="2–24 位中文、字母、数字或下划线" aria-describedby="cm-account-status" required></label>
+            <label class="cm-field"><span>密码</span><input id="cm-account-password" type="password" maxlength="72" autocomplete="current-password" placeholder="至少 8 位" aria-describedby="cm-account-status" required></label>
           </div>
           <label class="cm-field" id="cm-account-display-row" hidden><span>显示昵称（可选）</span><input id="cm-account-display" type="text" maxlength="20" autocomplete="nickname" placeholder="默认使用用户名"></label>
           <label class="cm-consent" id="cm-account-consent-row" hidden>
-            <input type="checkbox" id="cm-account-consent">
+            <input type="checkbox" id="cm-account-consent" aria-describedby="cm-account-status">
             <span>我已阅读并同意<a href="privacy.html" target="_blank" rel="noopener">隐私政策</a>，了解账号、留言与语音的处理方式。</span>
           </label>
           <p class="cm-status" id="cm-account-status" role="status" aria-live="polite"></p>
@@ -267,7 +287,7 @@
             </fieldset>
             <label class="cm-field">
               <span>想说的话 <small id="cm-count">0 / 200</small></span>
-              <textarea id="cm-text" maxlength="200" rows="4" placeholder="例如：我是广州人，最想教大家一句“得闲饮茶”。" required></textarea>
+              <textarea id="cm-text" maxlength="200" rows="4" placeholder="例如：我是广州人，最想教大家一句“得闲饮茶”。" aria-describedby="cm-status" required></textarea>
             </label>
             <div class="cm-reply" id="cm-reply" hidden>正在回复 <b id="cm-reply-name"></b><button type="button" id="cm-reply-cancel">取消</button></div>
             <div class="cm-audio">
@@ -277,7 +297,7 @@
               <button type="button" class="cm-audio-clear" id="cm-audio-clear" hidden>清除</button>
             </div>
             <label class="cm-consent">
-              <input type="checkbox" id="cm-consent">
+              <input type="checkbox" id="cm-consent" aria-describedby="cm-status">
               <span>我已阅读并同意<a href="privacy.html" target="_blank" rel="noopener">隐私政策</a>，同意将留言与可选语音保存到社区服务，并了解留言通过审核后会公开显示。</span>
             </label>
             <input class="cm-honey" id="cm-website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
@@ -317,18 +337,20 @@
 <footer class="footer">
   <div class="wrap">
     <div class="fn">一声一味<small>· 中国十大方言学习图鉴</small></div>
-    <p>这是一个<strong>设计展示原型</strong>：方言词汇、读音与例句为示例内容；主页发音按钮使用浏览器<strong>普通话合成音</strong>，并非方言真实读音。部分方言详情页已接入授权真人录音，详见各详情页「人言乡音」。数据与功能仅用于演示交互体验。</p>
+    <p>这是一个<strong>可运行的参赛版 MVP</strong>：方言词汇、读音与例句为示例内容；主页发音按钮使用浏览器<strong>普通话合成音</strong>，并非方言真实读音。部分方言详情页已接入授权真人录音，详见各详情页「人言乡音」。数据与功能用于演示交互体验，能力边界见「数据与方法」页。</p>
     <p class="note">注音混用粤拼、白话字/台罗及近音标注，部分方言词采用民间借字或近音字写法；读音与用词请以母语者或权威方言资料为准。</p>
-    <div class="bar"><span>© 2026 一声一味 · 中国十大方言</span><span><a href="privacy.html">隐私政策</a> · 官话 · 粤 · 吴 · 闽 · 客 · 湘 · 赣 · 晋 · 徽 · 平话</span></div>
+    <div class="bar"><span>© 2026 一声一味 · 中国十大方言</span><span><a href="data.html">数据观察</a> · <a href="action.html">保护行动</a> · <a href="methods.html">数据与方法</a> · <a href="privacy.html">隐私政策</a></span></div>
   </div>
 </footer>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="assets/data/dialects.js?v=bcafd9f291"></script>
-<script src="assets/main.js?v=aaa64e07f6"></script>
+<script src="assets/learn.js?v=4c2ac11ba7"></script>
+<script src="assets/main.js?v=734d0b8bc4"></script>
 <script src="assets/config.js?v=e9674f9c85"></script>
-<script src="assets/account.js?v=2bc206c5d8"></script>
-<script src="assets/admin.js?v=77f67d31da"></script>
-<script src="assets/community.js?v=0eb83370de"></script>
+<script src="assets/account.js?v=c48a08358e"></script>
+<script src="assets/admin.js?v=c5deb3e842"></script>
+<script src="assets/community.js?v=f328d7d773"></script>
+<script src="assets/nav.js?v=e5dcdb0c00"></script>
 </body>
 </html>

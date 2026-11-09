@@ -1,6 +1,6 @@
 # 一声一味 · 中国十大方言
 
-一个静态的方言学习图鉴原型：十个方言区、词汇翻卡、十句对比、方言辨识小测、主页面乡音社区，以及每个方言的详细历史、人言乡音、可交互分布地图和使用人口对比。社区支持匿名留言，也支持用户名 + 密码账号、关键词先发后审、举报队列、数据导出与账号注销。
+一个可运行的方言学习图鉴参赛版 MVP：十个方言区、词汇翻卡、十句对比、方言辨识小测、主页面乡音社区、数据观察、保护行动、数据与方法，以及每个方言的详细历史、人言乡音、可交互分布地图和使用人口对比。社区支持匿名留言，也支持用户名 + 密码账号、关键词先发后审、举报队列、数据导出与账号注销；学习进度、收藏和错题只保存在本机浏览器。
 
 ## 打开方式
 
@@ -43,6 +43,33 @@
 `beijing`、`guangzhou`、`shanghai`、`xiamen`、`meizhou`、`changsha`、`nanchang`、`taiyuan`、`huizhou`、`nanning`。
 详情页右上角的下拉框可以直接切换方言，无需返回主页。
 
+## 演示数据与三角色
+
+需要快速演示社区治理闭环时，可以一键写入演示数据：
+
+```bash
+npm run demo:seed    # 清空当前社区数据，写入三角色、公开留言、待审与举报样本
+npm run demo:reset   # 只清空社区数据
+```
+
+`demo:seed` 会写入：
+
+| 角色 | 登录方式 | 用途 |
+| --- | --- | --- |
+| 游客 | 无需登录 | 匿名留言、点赞、举报 |
+| 普通用户 | `xiangyin` / `xiangyin2026` | 登录发帖、查看“我的学习”账号数据、导出与注销 |
+| 管理员账号 | `guanli` / `guanli2026` | 演示登录态；管理面板仍需下面的服务端令牌 |
+
+管理员面板还需要在启动服务时设置令牌：
+
+```bash
+COMMUNITY_ADMIN_TOKEN=demo-admin-token-2026 node server.js
+```
+
+然后在页面「管理员面板」中填入同一个令牌，即可看到待审留言与举报队列。
+
+> `demo:seed` 和 `demo:reset` 都会删除现有留言、账号、登录会话与举报，只适合本机或演示环境。脚本默认读取 `.env`，并与服务端使用同一套 SQLite / PostgreSQL 选择逻辑。
+
 ## 页面结构
 
 详情页从上到下依次是：
@@ -56,12 +83,21 @@
 
 主页末尾是**乡音社区 · 每人一句家乡话**：按方言板块浏览、筛选、留言、上传/录制语音、点赞、接话和删除。启动 Node 服务时跨浏览器同步，否则只保存在本机浏览器。社区已从十个详情页统一收拢到主页，详情页只保留指向主页社区的链接。登录账号后留言会归属账号；未登录仍可匿名发布。留言采用“先发后审”，命中垃圾广告等关键词或举报达到阈值的留言会进入待审队列，由管理员处理。隐私政策见 `privacy.html`。
 
+主页新增**我的学习**：收藏词汇、翻面记录、辨识错题和测验成绩只写入本机 `localStorage`，不上传服务端；登录后同时汇总账号名下的留言与举报，并支持导出或清空本机学习记录。
+
+**数据观察**（`data.html`）用原生 SVG 展示城市青少年熟练度、代表方言代际趋势与活力指数排序，并为每个图表提供可展开的数据表。**保护行动**（`action.html`）包含价值、挑战、三条原则、六条路径、城市案例、政策时间线和一份可勾选的行动清单。**数据与方法**（`methods.html`）集中说明使用人口、占比、样本调查、趋势估算与活力指数的口径、公式和来源。
+
+移动端导航统一由 `assets/nav.js` 注入汉堡按钮并生成抽屉菜单：支持 Esc 关闭、点击外部关闭、焦点锁定和 `aria-expanded` 状态；键盘用户可以通过页首“跳到主要内容”链接跳过导航。所有页面共用 `assets/nav.css` 的焦点样式。
+
 ## 文件结构
 
 ```
 index.html              入口（跳转到方言学习页.html）
-方言学习页.html          主页（含“每人一句家乡话”乡音社区）
+方言学习页.html          主页（含“我的学习”与“每人一句家乡话”乡音社区）
 fangyan-detail.html     方言详情页（发展脉络、人言乡音、地图、人口）
+data.html               数据观察（城市青年、代际趋势、活力指数与关键指标）
+action.html             保护行动（价值、挑战、路径、案例、时间线与行动清单）
+methods.html            数据与方法（口径、公式、来源与社区数据说明）
 privacy.html            隐私政策页（收集范围、保存期限、导出与注销）
 server.js               社区服务：静态托管 + 社区 API/SSE + 人口 API
 lib/
@@ -80,12 +116,16 @@ deploy/
   nginx.conf            Nginx 反向代理示例
 scripts/
   init-s3.js            本地对象存储建桶 / 匿名读 / CORS 初始化（Compose 一次性任务）
+  demo-data.js          演示数据：seed / reset，预置游客、普通用户、管理员与待审/举报样本
+  check.js              静态数据、页面引用、脚本语法与本地资源检查
+  version-assets.js     按内容哈希刷新 JS/CSS 版本号
 Dockerfile              生产镜像（安装可选依赖）
 docker-compose.yml      应用 + PostgreSQL + Redis + RustFS + Caddy
 .env.example            部署环境变量模板
 assets/
   data/
     dialects.js         方言共享数据：主页、详情页、社区与服务端共用（唯一数据源）
+    insight.js          数据观察、保护行动、来源与方法说明的唯一内容源
   config.js             天地图 Key 与接口地址配置
   index.css             入口跳转页样式
   index.js              入口跳转逻辑
@@ -93,13 +133,19 @@ assets/
   main.js               主页面渲染、互动与结构化数据逻辑
   detail.css            详情页样式
   detail.js             详情页地图、音频、人口与结构化数据逻辑
+  nav.css               共享导航样式：skip link、焦点样式、移动端抽屉
+  nav.js                共享导航逻辑：汉堡按钮、焦点锁定、Esc 关闭
+  learn.css             “我的学习”收藏、错题与进度样式
+  learn.js              本机学习记录、收藏、错题、导出与账号数据汇总
   community.css         主页面乡音社区样式（含账号栏、管理面板、同意勾选）
   community.js          主页面乡音社区逻辑（本地 / 服务端实时）
   account.js            账号面板：登录、注册、导出数据、注销
   admin.js              管理员面板：待审、举报、公开/隐藏/删除
+  insight.css           数据观察 / 保护行动 / 数据与方法页样式
+  insight.js            原生 SVG 图表、行动清单与来源列表渲染
   privacy.css           隐私政策页样式
-  mapdata.js            离线省界 SVG 路径 + 投影参数（由 _genmap.py 生成）
-  chinageo.js           简化后的省级 GeoJSON，供 Leaflet 在线地图使用（由 _gengeo.py 生成）
+  mapdata.js            离线省界 SVG 路径 + 投影参数
+  chinageo.js           简化后的省级 GeoJSON，供 Leaflet 在线地图使用
   china.json            省界 GeoJSON 源数据
   audio/
     manifest.js         授权录音清单（标题、转写、许可、来源）
@@ -110,12 +156,7 @@ data/
   population.json       十个方言区公开人口统计与口径说明
   community.json        旧版社区 JSON（仅首次启动时导入 SQLite，之后不再写入）
   community.sqlite      社区 SQLite 数据库（运行时生成，含留言与点赞）
-_genmap.py              重新生成 assets/mapdata.js
-_gengeo.py              重新生成 assets/chinageo.js
-_shots/                 开发过程中的验证截图
 package.json            脚本入口（默认零运行时依赖，生产可选依赖见 optionalDependencies）
-scripts/check.js        静态数据、页面引用、脚本语法与本地资源检查
-scripts/version-assets.js  按内容哈希刷新 JS/CSS 版本号
 tests/                  node:test 自动化测试（共享数据 + 数据层适配 + 服务端/账号接口）
 .github/workflows/ci.yml  Node 22/24 自动检查与测试
 ```
@@ -131,13 +172,16 @@ npm start        # 等同于 node server.js
 npm run build    # 按内容哈希刷新页面里的 assets/*.js|css 版本号
 npm run check    # 检查共享数据、页面引用、外置脚本/样式、本地资源
 npm test         # 运行共享数据与服务端接口测试
+npm run demo:seed   # 写入演示数据（会清空现有社区数据）
+npm run demo:reset  # 清空社区数据
 ```
 
 `npm run check` 会验证：
 
 - `assets/data/dialects.js` 中十个方言的必填字段、历史阶段、省份、地图范围与风俗数据；
+- 主页、详情页、数据观察、保护行动、数据与方法、隐私页是否加载了对应样式与脚本；
 - 主页、详情页、社区和服务端是否仍然读取同一份共享数据；
-- 页面引用的外置脚本与 `server.js`、`assets/community.js`、`assets/data/dialects.js` 的语法，以及外置 CSS 的花括号配对；
+- 页面引用的外置脚本与 `server.js`、`assets/community.js`、`assets/data/dialects.js`、`scripts/demo-data.js` 的语法，以及外置 CSS 的花括号配对；
 - 页面是否仍残留可执行内联脚本或内联 `<style>`，避免与严格 CSP 冲突；
 - 带 `?v=` 的本地 JS/CSS 版本号是否与文件内容哈希一致；
 - 页面里引用的本地 `assets/*` 文件是否真实存在。
@@ -297,14 +341,7 @@ docker compose up -d --build
 - **常见报错**：如果控制台或页面提示 `301007 域名不匹配`，说明 Key 已生效，但当前访问域名不在 Key 的白名单里。注意：天地图控制台**不接受 `localhost`、`127.0.0.1`**，会提示“填写的IP或者域名有误”。本地调试可改用 `http://lvh.me:8787/` 访问（备用：`http://127.0.0.1.nip.io:8787/`），并把 `lvh.me` 加入 [天地图控制台](https://console.tianditu.gov.cn/api/key) 的域名白名单（多个域名用英文逗号分隔），保存后等待几分钟生效。部署到线上后，把实际域名加入白名单即可。`301012` 表示 Key 类型不对，请改用浏览器端 Key；`301013` 表示 Key 无效或已停用。若控制台开启了“安全密钥”，请先关闭，或确认当前页面已按天地图文档完成签名配置。
 - **离线示意**：省界来自 DataV GeoJSON 的简化数据，投影后生成 SVG；断网、CDN 不可用、天地图瓦片加载失败或 12 秒内没有任何瓦片加载成功时自动回退，也可以手动切换。
 - 方言区范围与核心区为近似示意，**不作为国界或行政区划依据**。在线底图版权归天地图所有，使用时需遵守天地图服务条款并保留署名与审图号。若用于公开发布，还需按标准地图管理规定履行地图审核手续。
-- 修改 `assets/china.json` 后，分别执行下面的脚本重新生成两种地图数据：
-
-  ```bash
-  python _genmap.py
-  python _gengeo.py
-  ```
-
-  页面里的省名高亮依赖 `DET[].provinces` 与 GeoJSON 中的省名完全一致。
+- 修改 `assets/china.json` 后，需要重新生成两种地图数据：`assets/mapdata.js`（离线 SVG 路径与投影参数）和 `assets/chinageo.js`（在线地图使用的简化 GeoJSON）。参赛版仓库保留生成后的结果，不再附带开发期的生成脚本；如需重建，可基于 `china.json` 编写投影脚本，页面里的省名高亮依赖 `DET[].provinces` 与 GeoJSON 中的省名完全一致。
 
 ## 人口数据说明
 
@@ -374,6 +411,6 @@ docker compose up -d --build
 - **天地图需要自行申请 Key**：仓库不包含任何 Key；未配置时只能使用离线示意。在线底图需遵守天地图服务条款，公开发布前请确认 Key 的配额与使用范围。
 - **人口不是实时人口**：现有公开统计最晚只到 2012 年出版、2004 年人口口径，没有权威的 2026 年实时数据。
 - **社区服务仍是原型级防护**：已有账号、关键词先发后审、举报队列、数据导出和账号注销；删除支持“发布令牌 + 管理员令牌 + 账号登录态”。但匿名会话令牌可自由申请、举报阈值可被多会话绕过、限流重启即清零，且没有邮件验证、密码找回、双因素认证、完整管理审计日志和自动数据保留任务，仍不是生产级方案；未设置 `CLIENT_TOKEN_SECRET` 时重启会让旧匿名令牌失效。
-- **源码屏蔽只覆盖自带 Node 服务**：`server.js` 会拒绝访问 `server.js`、`README.md`、`*.py`、`data/`、`_backup/`、`_shots/` 等敏感路径；如果改用 `python -m http.server` 或普通静态托管，这些文件仍可能被直接下载，请不要把项目根目录原样公开到公网。
+- **源码屏蔽只覆盖自带 Node 服务**：`server.js` 会拒绝访问 `server.js`、`README.md`、`*.py`、`data/`、`.git/` 等敏感路径；如果改用 `python -m http.server` 或普通静态托管，这些文件仍可能被直接下载，请不要把项目根目录原样公开到公网。
 - **共享数据已收拢**：方言名称、颜色、省份、历史、风俗和地图范围统一在 `assets/data/dialects.js`，主页、详情页、社区和服务端都从这一份数据读取；修改方言信息时只需要改这个文件。
 - **注音与用词需要母语者审校**：页面混用粤拼、白话字/台罗及近音标注，部分方言词使用民间借字或近音字写法。

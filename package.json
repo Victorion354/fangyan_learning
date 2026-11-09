@@ -7,6 +7,8 @@
     "start": "node server.js",
     "build": "node scripts/version-assets.js",
     "check": "node scripts/check.js",
+    "demo:seed": "node scripts/demo-data.js seed",
+    "demo:reset": "node scripts/demo-data.js reset",
     "test": "node --test tests/data.test.js tests/store.test.js tests/adapters.test.js tests/accounts.test.js tests/server.test.js"
   },
   "engines": {

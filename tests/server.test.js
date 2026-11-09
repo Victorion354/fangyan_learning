@@ -315,7 +315,7 @@ test('敏感文件与路径绕过均返回 404', async () => {
     '/server.js',
     '/README.md',
     '/package.json',
-    '/_genmap.py',
+    '/scripts/demo-data.js',
     '/data/community.json',
     '/data/population.json',
     '/.git/config',

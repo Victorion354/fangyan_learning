@@ -1,0 +1,60 @@
+/* 我的学习：收藏、错题、进度与个人数据 */
+
+.vfav{
+  position:absolute;top:10px;left:10px;z-index:3;
+  width:32px;height:32px;border-radius:50%;
+  display:grid;place-items:center;
+  border:1px solid color-mix(in srgb,var(--c) 30%,var(--line));
+  background:color-mix(in srgb,var(--c) 8%,#fff);
+  color:var(--c);font-size:17px;line-height:1;
+  transition:.2s;
+}
+.vfav:hover{background:var(--c);color:#fff}
+.vfav.on{background:var(--c);color:#fff;border-color:var(--c)}
+.vfav:focus-visible{outline:3px solid var(--bamboo);outline-offset:2px}
+.vcard.learn-target .vface{box-shadow:0 0 0 3px color-mix(in srgb,var(--bamboo) 45%,transparent)}
+
+.learn-panel{background:#fff9;border:1px solid var(--line);border-radius:4px 22px 4px 22px;padding:24px 26px 26px;box-shadow:0 5px 20px rgba(43,44,53,.05)}
+.learn-loading{font-size:14px;color:var(--ink2)}
+.learn-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.learn-stat{background:#faf6ee;border:1px solid var(--line);border-radius:4px 14px 4px 14px;padding:14px 16px}
+.learn-stat b{display:block;font-family:var(--fd);font-size:30px;line-height:1.1;color:var(--ink)}
+.learn-stat span{display:block;font-size:12px;color:var(--ink2);margin-top:3px}
+.learn-stat .unit{font-size:14px;color:var(--ink2);font-weight:400}
+.learn-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.learn-card{background:#faf6ee;border:1px solid var(--line);border-radius:4px 16px 4px 16px;padding:18px 18px 16px;min-width:0}
+.learn-card.wide{grid-column:1 / -1}
+.learn-card-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:12px}
+.learn-card-head h3{font-family:var(--fd);font-size:17px;color:var(--ink)}
+.learn-card-head span{font-size:11.5px;color:var(--ink2)}
+.learn-list{list-style:none;display:flex;flex-direction:column;gap:9px;max-height:330px;overflow:auto;padding-right:2px}
+.learn-item{display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:#fffdf8}
+.learn-item-main{min-width:0;flex:1}
+.learn-item-main b{display:block;font-family:var(--fd);font-size:15px;color:var(--ink);overflow-wrap:anywhere}
+.learn-item-main small{display:block;font-size:11.5px;color:var(--ink2);line-height:1.5;overflow-wrap:anywhere}
+.learn-item-actions{display:flex;gap:5px;flex-wrap:wrap;flex:0 0 auto}
+.learn-mini{border:1px solid var(--line);background:#f8f1e4;border-radius:999px;padding:3px 9px;font:inherit;font-size:11px;color:var(--ink2);cursor:pointer}
+.learn-mini:hover{border-color:var(--bamboo);color:var(--bamboo)}
+.learn-mini.danger:hover{border-color:var(--cinnabar);color:var(--cinnabar)}
+.learn-empty{font-size:13px;color:var(--ink2);line-height:1.7;padding:10px 2px}
+.learn-empty button{border:0;background:transparent;color:var(--bamboo);font:inherit;font-size:13px;text-decoration:underline;cursor:pointer}
+.learn-tag{display:inline-block;border:1px solid var(--line);background:#f8f1e4;border-radius:999px;padding:1px 8px;font-size:10.5px;color:var(--ink2);margin-left:5px;vertical-align:1px}
+.learn-tag.visible{background:#eef6ef;border-color:#bcd6c2;color:#2e6b3e}
+.learn-tag.pending{background:#fbf3e2;border-color:#e2c893;color:#8a5a20}
+.learn-tag.hidden,.learn-tag.removed{background:#fbecea;border-color:#e0b6b0;color:var(--cinnabar)}
+.learn-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.learn-actions button{border:1px solid var(--line);background:#f8f1e4;border-radius:999px;padding:8px 15px;font:inherit;font-size:12.5px;color:var(--ink2);cursor:pointer;transition:.2s}
+.learn-actions button:hover{border-color:var(--bamboo);color:var(--bamboo)}
+.learn-actions button.danger:hover{border-color:var(--cinnabar);color:var(--cinnabar)}
+.learn-note{font-size:11.5px;color:var(--ink2);line-height:1.7;margin-top:12px}
+
+@media(max-width:860px){
+  .learn-summary{grid-template-columns:repeat(2,1fr)}
+  .learn-grid{grid-template-columns:1fr}
+}
+@media(max-width:520px){
+  .learn-panel{padding:18px 16px 20px}
+  .learn-stat b{font-size:25px}
+  .learn-item{flex-direction:column}
+  .learn-item-actions{width:100%}
+}

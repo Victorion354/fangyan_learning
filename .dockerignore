@@ -6,8 +6,6 @@ data/community.sqlite-shm
 data/community.sqlite-wal
 data/community.json
 data/community.json.corrupt-*
-_backup
-_shots
 *.log
 .env
 .env.*

@@ -5,10 +5,6 @@ data/community.sqlite
 data/community.sqlite-*
 data/*.tmp-*
 
-# 开发备份与验证截图
-_backup/
-_shots/
-
 # 依赖与系统文件
 node_modules/
 .DS_Store

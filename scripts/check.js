@@ -50,6 +50,18 @@ const index = read('index.html');
 const main = read('方言学习页.html');
 const detail = read('fangyan-detail.html');
 const privacy = read('privacy.html');
+const dataPage = read('data.html');
+const actionPage = read('action.html');
+const methodsPage = read('methods.html');
+const pages = [
+  ['index.html', index],
+  ['方言学习页.html', main],
+  ['fangyan-detail.html', detail],
+  ['privacy.html', privacy],
+  ['data.html', dataPage],
+  ['action.html', actionPage],
+  ['methods.html', methodsPage]
+];
 const mainJs = read('assets/main.js');
 const detailJs = read('assets/detail.js');
 const community = read('assets/community.js');
@@ -86,9 +98,10 @@ const scriptFiles = new Set([
   'lib/store.js',
   'lib/accounts.js',
   'lib/moderation.js',
-  'scripts/init-s3.js'
+  'scripts/init-s3.js',
+  'scripts/demo-data.js'
 ]);
-for (const html of [index, main, detail, privacy]) {
+for (const html of pages.map((entry) => entry[1])) {
   const re = /<script[^>]+src="(assets\/[^"?#]+\.js)(?:[?#][^"]*)?"/g;
   let match;
   while ((match = re.exec(html))) scriptFiles.add(match[1]);
@@ -99,7 +112,7 @@ for (const file of scriptFiles) {
 }
 notes.push('脚本语法：' + scriptFiles.size + ' 个文件');
 
-for (const [file, html] of [['index.html', index], ['方言学习页.html', main], ['fangyan-detail.html', detail], ['privacy.html', privacy]]) {
+for (const [file, html] of pages) {
   const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
   let match;
   let index = 0;
@@ -122,19 +135,22 @@ if (!index.includes('href="assets/index.css')) fail('入口页没有加载 asset
 if (!main.includes('href="assets/main.css')) fail('主页没有加载 assets/main.css');
 if (!detail.includes('href="assets/detail.css')) fail('详情页没有加载 assets/detail.css');
 if (!privacy.includes('href="assets/privacy.css')) fail('隐私政策页没有加载 assets/privacy.css');
-for (const [file, html] of [['index.html', index], ['方言学习页.html', main], ['fangyan-detail.html', detail], ['privacy.html', privacy]]) {
+if (!dataPage.includes('href="assets/insight.css')) fail('数据观察页没有加载 assets/insight.css');
+if (!actionPage.includes('href="assets/insight.css')) fail('保护行动页没有加载 assets/insight.css');
+if (!methodsPage.includes('href="assets/insight.css')) fail('数据与方法页没有加载 assets/insight.css');
+for (const [file, html] of pages) {
   if (/<style[\s>]/i.test(html)) fail(file + ' 仍包含内联 <style>，会与 CSP style-src 冲突');
 }
-for (const file of ['assets/index.css', 'assets/main.css', 'assets/detail.css', 'assets/community.css', 'assets/privacy.css']) {
+for (const file of ['assets/index.css', 'assets/main.css', 'assets/detail.css', 'assets/community.css', 'assets/privacy.css', 'assets/nav.css', 'assets/learn.css', 'assets/insight.css']) {
   const css = read(file);
   const open = (css.match(/{/g) || []).length;
   const close = (css.match(/}/g) || []).length;
   if (open !== close) fail(file + ' 花括号不配对：' + open + ' / ' + close);
 }
-notes.push('页面样式：5 个外置 CSS，无内联 <style>');
+notes.push('页面样式：8 个外置 CSS，无内联 <style>');
 
 /* 3.2 版本号必须与文件内容哈希一致，避免 immutable 缓存拿到旧资源 */
-for (const [file, html] of [['index.html', index], ['方言学习页.html', main], ['fangyan-detail.html', detail], ['privacy.html', privacy]]) {
+for (const [file, html] of pages) {
   const re = /(?:src|href)="(assets\/[^"?#]+\.(?:js|css))(?:\?v=([^"#]*))?"/g;
   let match;
   while ((match = re.exec(html))) {
@@ -153,7 +169,7 @@ for (const [file, html] of [['index.html', index], ['方言学习页.html', main
 notes.push('资源版本：JS/CSS 版本号与内容哈希一致');
 
 /* 4. 页面静态引用的本地资源是否存在 */
-for (const [file, html] of [['index.html', index], ['方言学习页.html', main], ['fangyan-detail.html', detail], ['privacy.html', privacy]]) {
+for (const [file, html] of pages) {
   const re = /(?:src|href)="(assets\/[^"?#]+)(?:[?#][^"]*)?"/g;
   let match;
   while ((match = re.exec(html))) {

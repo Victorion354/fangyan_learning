@@ -204,7 +204,12 @@
   function enter() {
     var input = document.getElementById('cm-admin-token');
     var value = input ? input.value.trim() : '';
-    if (!value) { status('请输入管理员令牌', 'bad'); return; }
+    if (!value) {
+      if (input) { input.setAttribute('aria-invalid', 'true'); input.focus(); }
+      status('请输入管理员令牌', 'bad');
+      return;
+    }
+    if (input) input.removeAttribute('aria-invalid');
     setToken(value);
     if (input) input.value = '';
     markTab('pending');
@@ -232,6 +237,7 @@
     if (close) close.addEventListener('click', closePanel);
     if (enterBtn) enterBtn.addEventListener('click', enter);
     if (tokenInput) {
+      tokenInput.addEventListener('input', function () { tokenInput.removeAttribute('aria-invalid'); });
       tokenInput.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') { e.preventDefault(); enter(); }
       });
