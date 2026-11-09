@@ -17,6 +17,16 @@
 .insight-hero h1 .g{color:transparent;background:linear-gradient(120deg,#dfe8d6 10%,#a9c39b 55%,#c9b8e2 100%);-webkit-background-clip:text;background-clip:text}
 .insight-hero p{max-width:70ch;color:#c5c0b4;font-size:15px;line-height:1.85}
 
+/* ===== 内容索引 ===== */
+.content-index{position:sticky;top:60px;z-index:40;background:rgba(241,234,224,.96);border-bottom:1px solid var(--line);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.ci-in{display:flex;align-items:center;gap:14px;padding:9px 0}
+.ci-label{flex:none;font-family:var(--fd);font-size:12px;letter-spacing:.18em;color:var(--mut)}
+.ci-list{display:flex;align-items:center;gap:6px;list-style:none;margin:0;padding:0;min-width:0;overflow-x:auto;scrollbar-width:thin}
+.ci-list a{display:block;padding:5px 11px;border-radius:999px;font-size:12.5px;color:var(--ink2);white-space:nowrap;transition:.2s}
+.ci-list a:hover{background:rgba(178,58,48,.09);color:var(--cinnabar)}
+.ci-list a:focus-visible{outline:2px solid var(--bamboo);outline-offset:2px}
+.insight-section[id]{scroll-margin-top:118px}
+
 .insight-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:30px}
 .insight-stat{border:1px solid rgba(236,230,216,.16);background:rgba(236,230,216,.05);border-radius:4px 16px 4px 16px;padding:15px 17px}
 .insight-stat b{display:block;font-family:var(--fd);font-size:clamp(24px,3.2vw,34px);line-height:1.15;color:#f0eadb}
@@ -158,6 +168,9 @@
 }
 @media(max-width:560px){
   .insight-hero{padding:112px 0 46px}
+  .ci-in{flex-direction:column;align-items:flex-start;gap:5px;padding:7px 0 8px}
+  .ci-list{width:100%}
+  .insight-section[id]{scroll-margin-top:142px}
   .insight-stats{grid-template-columns:1fr 1fr;gap:8px}
   .insight-stat{padding:12px 13px}
   .chart-card{padding:17px 14px 15px}
