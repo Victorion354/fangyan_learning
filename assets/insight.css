@@ -16,10 +16,6 @@
 .insight-hero h1{font-family:var(--fd);font-size:clamp(30px,5.4vw,54px);line-height:1.18;letter-spacing:.04em;margin:16px 0 14px}
 .insight-hero h1 .g{color:transparent;background:linear-gradient(120deg,#dfe8d6 10%,#a9c39b 55%,#c9b8e2 100%);-webkit-background-clip:text;background-clip:text}
 .insight-hero p{max-width:70ch;color:#c5c0b4;font-size:15px;line-height:1.85}
-.insight-hero .hero-links{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
-.insight-hero .hero-links a{border:1px solid rgba(236,230,216,.32);border-radius:999px;padding:8px 16px;font-size:13px;color:#ece6d8;transition:.2s}
-.insight-hero .hero-links a:hover{background:rgba(236,230,216,.12);border-color:rgba(236,230,216,.6)}
-.insight-hero .hero-links a.primary{background:var(--cinnabar);border-color:var(--cinnabar)}
 
 .insight-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:30px}
 .insight-stat{border:1px solid rgba(236,230,216,.16);background:rgba(236,230,216,.05);border-radius:4px 16px 4px 16px;padding:15px 17px}
