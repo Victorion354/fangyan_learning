@@ -1,13 +1,66 @@
-/* 共享导航：移动端汉堡菜单
+/* 共享导航：移动端汉堡菜单与聚焦跳转
  *
  * - 自动插入汉堡按钮，不改动页面原有的导航结构
  * - 支持 Esc 关闭、点击外部关闭、窗口放大自动关闭
  * - 打开时把键盘焦点限制在菜单内，关闭后回到汉堡按钮
+ * - 带 ?from=action|methods 打开时进入聚焦模式：只保留返回按钮，并即时定位锚点
  */
 (function () {
   'use strict';
 
+  var FOCUS_FALLBACK = { action: 'action.html', methods: 'methods.html' };
+
+  function initFocusMode() {
+    var params = new URLSearchParams(window.location.search);
+    var from = params.get('from');
+    if (!from || !Object.prototype.hasOwnProperty.call(FOCUS_FALLBACK, from)) return false;
+
+    document.body.classList.add('focus-mode');
+
+    var root = document.documentElement;
+    root.style.scrollBehavior = 'auto';
+
+    function jump() {
+      var hash = window.location.hash;
+      if (!hash || hash.length < 2) return;
+      var id = hash.slice(1);
+      try {
+        id = decodeURIComponent(id);
+      } catch (_) {}
+      var target = document.getElementById(id);
+      if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
+    }
+
+    jump();
+    window.addEventListener('load', jump);
+    if (window.requestAnimationFrame) window.requestAnimationFrame(jump);
+
+    var bar = document.querySelector('.nav .nav-in');
+    if (!bar) return true;
+
+    var fallback = FOCUS_FALLBACK[from];
+    var back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'focus-back';
+    back.textContent = '← 返回';
+    back.setAttribute('aria-label', '返回到上一页');
+    back.addEventListener('click', function () {
+      var ref = document.referrer;
+      var sameOrigin = ref && ref.indexOf(window.location.origin) === 0;
+      if (sameOrigin && window.history.length > 1) {
+        window.history.back();
+      } else {
+        window.location.href = fallback;
+      }
+    });
+    bar.appendChild(back);
+    return true;
+  }
+
+  var focusMode = initFocusMode();
+
   function init() {
+    if (focusMode) return;
     var nav = document.querySelector('.nav');
     if (!nav || nav.getAttribute('data-nav-ready') === 'true') return;
     var menu = nav.querySelector('.nav-links') || nav.querySelector('.nav-right');
