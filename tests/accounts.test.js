@@ -118,6 +118,17 @@ async function createPost(session, token, overrides = {}) {
   });
 }
 
+async function waitForMailToken(param, from) {
+  const deadline = Date.now() + 5000;
+  const re = new RegExp(param + '=([A-Za-z0-9_-]{20,})');
+  while (Date.now() < deadline) {
+    const match = re.exec(childOutput.slice(from));
+    if (match) return match[1];
+    await sleep(50);
+  }
+  throw new Error('等待邮件令牌超时：' + param + '\n' + childOutput.slice(from));
+}
+
 before(async () => {
   port = await freePort();
   base = 'http://127.0.0.1:' + port;
@@ -137,6 +148,9 @@ before(async () => {
       DB_DRIVER: 'sqlite',
       REDIS_URL: '',
       S3_BUCKET: '',
+      MAIL_PROVIDER: 'console',
+      MAIL_FROM: 'no-reply@test.local',
+      PUBLIC_BASE_URL: base,
       REPORT_HIDE_THRESHOLD: '3'
     }),
     stdio: ['ignore', 'pipe', 'pipe']
@@ -174,6 +188,148 @@ test('健康检查暴露账号、审核与举报能力', async () => {
   assert.equal(data.features.accounts, true);
   assert.equal(data.features.moderation, true);
   assert.equal(data.features.reports, true);
+  assert.equal(data.features.email, 'console');
+  assert.equal(data.features.auditLogs, true);
+});
+
+test('邮箱注册、验证、忘记密码与重置密码', async () => {
+  const email = 'mail' + Math.random().toString(36).slice(2, 8) + '@example.com';
+  const mark = childOutput.length;
+  const created = await register({ email: email });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.user.email, email);
+  assert.equal(created.data.user.emailVerified, false);
+  assert.equal(created.data.emailSent, true);
+  const username = created.data.user.username;
+
+  const duplicate = await register({ email: email });
+  assert.equal(duplicate.status, 409);
+  assert.match(duplicate.data.error, /邮箱/);
+
+  const verifyToken = await waitForMailToken('verifyEmail', mark);
+  const verified = await jsonFetch('/api/auth/verify-email', {
+    method: 'POST',
+    body: { token: verifyToken }
+  });
+  assert.equal(verified.status, 200);
+  assert.equal(verified.data.user.emailVerified, true);
+
+  const me = await jsonFetch('/api/auth/me', { headers: authHeaders(created.data.token) });
+  assert.equal(me.status, 200);
+  assert.equal(me.data.user.emailVerified, true);
+
+  const again = await jsonFetch('/api/auth/verify-email', {
+    method: 'POST',
+    body: { token: verifyToken }
+  });
+  assert.equal(again.status, 400);
+
+  const resend = await jsonFetch('/api/auth/resend-verification', {
+    method: 'POST',
+    headers: authHeaders(created.data.token)
+  });
+  assert.equal(resend.status, 409);
+
+  const resetMark = childOutput.length;
+  const generic = await jsonFetch('/api/auth/forgot-password', {
+    method: 'POST',
+    body: { email: email }
+  });
+  assert.equal(generic.status, 200);
+  assert.match(generic.data.notice, /如果该邮箱对应账号/);
+
+  const resetToken = await waitForMailToken('resetPassword', resetMark);
+  const reset = await jsonFetch('/api/auth/reset-password', {
+    method: 'POST',
+    body: { token: resetToken, password: 'new-correct-horse-2026' }
+  });
+  assert.equal(reset.status, 200);
+
+  const oldLogin = await jsonFetch('/api/auth/login', {
+    method: 'POST',
+    body: { username: username, password: 'correct-horse-2026' }
+  });
+  assert.equal(oldLogin.status, 401);
+
+  const newLogin = await jsonFetch('/api/auth/login', {
+    method: 'POST',
+    body: { username: username, password: 'new-correct-horse-2026' }
+  });
+  assert.equal(newLogin.status, 200);
+
+  const oldSession = await jsonFetch('/api/auth/me', {
+    headers: authHeaders(created.data.token)
+  });
+  assert.equal(oldSession.status, 401);
+
+  const unknown = await jsonFetch('/api/auth/forgot-password', {
+    method: 'POST',
+    body: { email: 'nobody-' + Date.now() + '@example.com' }
+  });
+  assert.equal(unknown.status, 200);
+  assert.match(unknown.data.notice, /如果该邮箱对应账号/);
+});
+
+test('管理员登录、留言操作与审计日志导出', async () => {
+  const login = await jsonFetch('/api/admin/session', {
+    method: 'POST',
+    headers: { 'X-Admin-Token': ADMIN_TOKEN }
+  });
+  assert.equal(login.status, 200);
+  assert.match(login.data.fingerprint, /^[a-f0-9]{12}$/);
+
+  const session = await createSession();
+  const created = await createPost(session, null, { text: '审计日志测试留言' });
+  assert.equal(created.status, 201);
+
+  const changed = await jsonFetch('/api/admin/posts/' + created.data.post.id, {
+    method: 'PATCH',
+    headers: { 'X-Admin-Token': ADMIN_TOKEN },
+    body: { status: 'hidden' }
+  });
+  assert.equal(changed.status, 200);
+
+  const audit = await jsonFetch('/api/admin/audit?limit=200', {
+    headers: { 'X-Admin-Token': ADMIN_TOKEN }
+  });
+  assert.equal(audit.status, 200);
+  assert.ok(audit.data.total >= 2);
+  const actions = audit.data.logs.map((log) => log.action);
+  assert.ok(actions.includes('admin.login'));
+  assert.ok(actions.includes('post.status'));
+  const record = audit.data.logs.find((log) => log.action === 'post.status');
+  assert.equal(record.targetType, 'post');
+  assert.equal(record.targetId, created.data.post.id);
+  assert.match(record.actorLabel, /^[a-f0-9]{12}$/);
+
+  const filtered = await jsonFetch('/api/admin/audit?action=post.status', {
+    headers: { 'X-Admin-Token': ADMIN_TOKEN }
+  });
+  assert.equal(filtered.status, 200);
+  assert.ok(filtered.data.logs.every((log) => log.action === 'post.status'));
+
+  const csvRes = await fetch(base + '/api/admin/audit/export?format=csv', {
+    headers: { 'X-Admin-Token': ADMIN_TOKEN }
+  });
+  assert.equal(csvRes.status, 200);
+  assert.match(csvRes.headers.get('content-type') || '', /text\/csv/);
+  assert.match(csvRes.headers.get('content-disposition') || '', /fangyan-audit-/);
+  const csv = await csvRes.text();
+  assert.match(csv, /操作者指纹/);
+  assert.match(csv, /admin\.login/);
+
+  const jsonRes = await fetch(base + '/api/admin/audit/export?format=json', {
+    headers: { 'X-Admin-Token': ADMIN_TOKEN }
+  });
+  assert.equal(jsonRes.status, 200);
+  const exported = await jsonRes.json();
+  assert.ok(Array.isArray(exported.logs));
+  assert.ok(exported.count >= 2);
+
+  const denied = await jsonFetch('/api/admin/audit', {
+    headers: { 'X-Admin-Token': 'not-the-token' }
+  });
+  assert.equal(denied.status, 403);
 });
 
 test('注册校验：用户名、密码与隐私同意', async () => {

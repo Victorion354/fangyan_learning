@@ -47,12 +47,21 @@ CREATE TABLE IF NOT EXISTS users (
   username_key TEXT NOT NULL UNIQUE,
   display_name TEXT NOT NULL DEFAULT '',
   password_hash TEXT NOT NULL,
+  email TEXT NOT NULL DEFAULT '',
+  email_key TEXT,
+  email_verified_at BIGINT,
   created_at BIGINT NOT NULL,
   consent_at BIGINT,
   status TEXT NOT NULL DEFAULT 'active'
 );
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_key TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at BIGINT;
+
 CREATE INDEX IF NOT EXISTS idx_users_created ON users (created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_key ON users (email_key)
+  WHERE email_key IS NOT NULL AND email_key <> '';
 
 CREATE TABLE IF NOT EXISTS user_sessions (
   token_hash TEXT PRIMARY KEY,
@@ -63,6 +72,18 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions (user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry ON user_sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS email_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  used_at BIGINT
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens (user_id, kind);
+CREATE INDEX IF NOT EXISTS idx_email_tokens_expiry ON email_tokens (expires_at);
 
 CREATE TABLE IF NOT EXISTS reports (
   id TEXT PRIMARY KEY,
@@ -78,6 +99,23 @@ CREATE TABLE IF NOT EXISTS reports (
 
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reports_post ON reports (post_id);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  actor_type TEXT NOT NULL DEFAULT 'admin',
+  actor_label TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL DEFAULT '',
+  target_id TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
+  created_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs (action, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_logs (target_type, target_id);
 
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,

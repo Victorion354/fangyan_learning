@@ -24,7 +24,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23B23A30'/%3E%3Cpath d='M20 44h24M24 34h16M27 24h10' stroke='%23F1EAE0' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/main.css?v=04682dc16b">
 <link rel="stylesheet" href="assets/nav.css?v=2d182d1c5b">
-<link rel="stylesheet" href="assets/community.css?v=0363277369">
+<link rel="stylesheet" href="assets/community.css?v=7140146727">
 <link rel="stylesheet" href="assets/learn.css?v=93b18d1072">
 </head>
 <body>
@@ -205,6 +205,7 @@
           </div>
           <div class="cm-account-actions">
             <button type="button" class="cm-account-btn" id="cm-account-toggle">登录 / 注册</button>
+            <button type="button" class="cm-account-btn" id="cm-account-resend" hidden>验证邮箱</button>
             <button type="button" class="cm-account-btn" id="cm-account-export" hidden>导出数据</button>
             <button type="button" class="cm-account-btn" id="cm-account-logout" hidden>退出</button>
             <button type="button" class="cm-account-btn danger" id="cm-account-delete" hidden>注销账号</button>
@@ -221,14 +222,42 @@
             <label class="cm-field"><span>密码</span><input id="cm-account-password" type="password" maxlength="72" autocomplete="current-password" placeholder="至少 8 位" aria-describedby="cm-account-status" required></label>
           </div>
           <label class="cm-field" id="cm-account-display-row" hidden><span>显示昵称（可选）</span><input id="cm-account-display" type="text" maxlength="20" autocomplete="nickname" placeholder="默认使用用户名"></label>
+          <label class="cm-field" id="cm-account-email-row" hidden><span>邮箱（可选）</span><input id="cm-account-email" type="email" maxlength="254" autocomplete="email" placeholder="用于验证邮箱和找回密码" aria-describedby="cm-account-status"></label>
           <label class="cm-consent" id="cm-account-consent-row" hidden>
             <input type="checkbox" id="cm-account-consent" aria-describedby="cm-account-status">
             <span>我已阅读并同意<a href="privacy.html" target="_blank" rel="noopener">隐私政策</a>，了解账号、留言与语音的处理方式。</span>
           </label>
           <p class="cm-status" id="cm-account-status" role="status" aria-live="polite"></p>
           <div class="cm-form-foot">
+            <button type="button" class="cm-account-switch" id="cm-account-forgot">忘记密码？</button>
             <button type="button" class="cm-account-switch" id="cm-account-switch">没有账号？注册</button>
             <button type="submit" class="cm-submit" id="cm-account-submit">登录</button>
+          </div>
+        </form>
+        <form class="cm-account-form" id="cm-account-forgot-form" hidden>
+          <div class="cm-form-head">
+            <h3>找回密码</h3>
+            <button type="button" class="cm-close" id="cm-account-forgot-close" aria-label="关闭找回密码表单">×</button>
+          </div>
+          <p class="cm-delete-warn">输入注册时绑定的邮箱。如果该邮箱对应账号，我们会发送一封重置邮件。未绑定邮箱的账号暂时无法通过邮箱找回，请妥善保管密码。</p>
+          <label class="cm-field"><span>邮箱</span><input id="cm-account-forgot-email" type="email" maxlength="254" autocomplete="email" placeholder="you@example.com" required></label>
+          <p class="cm-status" id="cm-account-forgot-status" role="status" aria-live="polite"></p>
+          <div class="cm-form-foot">
+            <button type="button" class="cm-account-switch" id="cm-account-forgot-cancel">返回登录</button>
+            <button type="submit" class="cm-submit" id="cm-account-forgot-submit">发送重置邮件</button>
+          </div>
+        </form>
+        <form class="cm-account-form" id="cm-account-reset-form" hidden>
+          <div class="cm-form-head">
+            <h3>重置密码</h3>
+            <button type="button" class="cm-close" id="cm-account-reset-close" aria-label="关闭重置密码表单">×</button>
+          </div>
+          <p class="cm-delete-warn">设置新密码后，其他设备上的登录会失效。重置链接 30 分钟内有效。</p>
+          <label class="cm-field"><span>新密码</span><input id="cm-account-reset-password" type="password" maxlength="72" autocomplete="new-password" placeholder="至少 8 位" required></label>
+          <p class="cm-status" id="cm-account-reset-status" role="status" aria-live="polite"></p>
+          <div class="cm-form-foot">
+            <button type="button" class="cm-account-switch" id="cm-account-reset-cancel">取消</button>
+            <button type="submit" class="cm-submit" id="cm-account-reset-submit">重置密码</button>
           </div>
         </form>
         <form class="cm-account-form" id="cm-account-delete-form" hidden>
@@ -322,8 +351,28 @@
             <button type="button" class="cm-admin-tab on" data-admin-tab="pending" role="tab" aria-selected="true">待审</button>
             <button type="button" class="cm-admin-tab" data-admin-tab="reports" role="tab" aria-selected="false">举报</button>
             <button type="button" class="cm-admin-tab" data-admin-tab="all" role="tab" aria-selected="false">全部</button>
+            <button type="button" class="cm-admin-tab" data-admin-tab="audit" role="tab" aria-selected="false">审计</button>
           </div>
           <p class="cm-status" id="cm-admin-status" role="status" aria-live="polite"></p>
+          <div class="cm-admin-audit-bar" id="cm-admin-audit-bar" hidden>
+            <label class="cm-field"><span>操作类型</span>
+              <select id="cm-admin-audit-action">
+                <option value="">全部操作</option>
+                <option value="admin.login">管理员登录</option>
+                <option value="post.status">修改留言状态</option>
+                <option value="post.delete">删除留言</option>
+                <option value="report.resolve">处理举报</option>
+                <option value="report.dismiss">忽略举报</option>
+                <option value="audit.export">导出审计日志</option>
+              </select>
+            </label>
+            <div class="cm-admin-audit-actions">
+              <button type="button" class="cm-account-btn" id="cm-admin-audit-refresh">刷新</button>
+              <button type="button" class="cm-account-btn" id="cm-admin-audit-csv">导出 CSV</button>
+              <button type="button" class="cm-account-btn" id="cm-admin-audit-json">导出 JSON</button>
+            </div>
+          </div>
+          <p class="cm-admin-audit-note" id="cm-admin-audit-note" hidden>审计日志只记录管理员操作：登录、修改留言状态、删除留言、处理或忽略举报、导出审计日志；不记录普通用户发帖、点赞或注销。</p>
           <div class="cm-admin-list" id="cm-admin-list"></div>
         </div>
       </section>
@@ -347,8 +396,8 @@
 <script src="assets/learn.js?v=4c2ac11ba7"></script>
 <script src="assets/main.js?v=734d0b8bc4"></script>
 <script src="assets/config.js?v=e9674f9c85"></script>
-<script src="assets/account.js?v=c48a08358e"></script>
-<script src="assets/admin.js?v=c5deb3e842"></script>
+<script src="assets/account.js?v=5f055f134a"></script>
+<script src="assets/admin.js?v=f915233767"></script>
 <script src="assets/community.js?v=f328d7d773"></script>
 <script src="assets/nav.js?v=b3f84cab41"></script>
 </body>

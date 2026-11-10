@@ -101,16 +101,22 @@
     var switcher = document.getElementById('cm-account-switch');
     var consent = document.getElementById('cm-account-consent-row');
     var display = document.getElementById('cm-account-display-row');
+    var emailRow = document.getElementById('cm-account-email-row');
+    var forgot = document.getElementById('cm-account-forgot');
     if (submit) submit.textContent = register ? '注册并登录' : '登录';
     if (switcher) switcher.textContent = register ? '已有账号？去登录' : '没有账号？注册';
     if (consent) consent.hidden = !register;
     if (display) display.hidden = !register;
+    if (emailRow) emailRow.hidden = !register;
+    if (forgot) forgot.hidden = register;
     setStatus('');
   }
 
   function openForm() {
     var form = document.getElementById('cm-account-form');
     if (!form) return;
+    closeForgot();
+    closeReset();
     form.hidden = false;
     setMode(mode);
     markInvalid(document.getElementById('cm-account-username'), false);
@@ -132,6 +138,7 @@
     var name = document.getElementById('cm-account-name');
     var note = document.getElementById('cm-account-note');
     var toggle = document.getElementById('cm-account-toggle');
+    var resendBtn = document.getElementById('cm-account-resend');
     var exportBtn = document.getElementById('cm-account-export');
     var logoutBtn = document.getElementById('cm-account-logout');
     var deleteBtn = document.getElementById('cm-account-delete');
@@ -141,8 +148,14 @@
       badge.textContent = '已登录';
       badge.className = 'cm-account-badge on';
       name.textContent = u.displayName || u.username;
-      note.textContent = '@' + u.username + ' · 留言归属账号，可导出与注销';
+      if (u.email) {
+        note.textContent = '@' + u.username + ' · ' +
+          (u.emailVerified ? '邮箱已验证' : '邮箱待验证') + ' · ' + u.email;
+      } else {
+        note.textContent = '@' + u.username + ' · 留言归属账号，可导出与注销';
+      }
       if (toggle) toggle.hidden = true;
+      if (resendBtn) resendBtn.hidden = !(u.email && !u.emailVerified);
       if (exportBtn) exportBtn.hidden = false;
       if (logoutBtn) logoutBtn.hidden = false;
       if (deleteBtn) deleteBtn.hidden = false;
@@ -153,6 +166,7 @@
       name.textContent = '未登录';
       note.textContent = '登录后留言归属账号；也可以继续匿名留言';
       if (toggle) toggle.hidden = false;
+      if (resendBtn) resendBtn.hidden = true;
       if (exportBtn) exportBtn.hidden = true;
       if (logoutBtn) logoutBtn.hidden = true;
       if (deleteBtn) deleteBtn.hidden = true;
@@ -169,11 +183,20 @@
     var username = (usernameInput.value || '').trim();
     var password = passwordInput.value || '';
     var displayName = (document.getElementById('cm-account-display').value || '').trim();
+    var emailInput = document.getElementById('cm-account-email');
+    var email = emailInput ? (emailInput.value || '').trim() : '';
     var consent = consentInput.checked;
     if (!username) { markInvalid(usernameInput, true); setStatus('请填写用户名', 'bad'); usernameInput.focus(); return; }
     markInvalid(usernameInput, false);
     if (!password) { markInvalid(passwordInput, true); setStatus('请填写密码', 'bad'); passwordInput.focus(); return; }
     markInvalid(passwordInput, false);
+    if (mode === 'register' && email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      markInvalid(emailInput, true);
+      setStatus('邮箱格式不正确', 'bad');
+      emailInput.focus();
+      return;
+    }
+    markInvalid(emailInput, false);
     if (mode === 'register' && !consent) { markInvalid(consentInput, true); setStatus('注册前请勾选同意隐私政策', 'bad'); consentInput.focus(); return; }
     markInvalid(consentInput, false);
 
@@ -186,6 +209,7 @@
     if (mode === 'register') {
       body.consent = true;
       body.displayName = displayName;
+      if (email) body.email = email;
     }
     fetch(api(mode === 'register' ? '/api/auth/register' : '/api/auth/login'), {
       method: 'POST',
@@ -203,7 +227,11 @@
       render();
       notify();
       document.getElementById('cm-account-password').value = '';
-      toast(mode === 'register' ? '注册成功，已登录' : '已登录');
+      if (mode === 'register' && j.emailNotice) {
+        toast(j.emailSent ? '注册成功，验证邮件已发送' : '注册成功，验证邮件暂时未发出');
+      } else {
+        toast(mode === 'register' ? '注册成功，已登录' : '已登录');
+      }
     }).catch(function (err) {
       setStatus((err && err.message) || '操作失败，请稍后重试', 'bad');
     }).then(function () {
@@ -306,11 +334,207 @@
     });
   }
 
+  /* ===== 邮箱验证 / 找回密码 ===== */
+
+  function formStatus(id, text, tone) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = 'cm-status' + (tone ? ' ' + tone : '');
+  }
+
+  function stripParam(name) {
+    try {
+      var url = new URL(location.href);
+      if (!url.searchParams.has(name)) return;
+      url.searchParams.delete(name);
+      history.replaceState(null, '', url.toString());
+    } catch (e) {}
+  }
+
+  function openForgot() {
+    closeForm();
+    closeDelete();
+    closeReset();
+    var form = document.getElementById('cm-account-forgot-form');
+    if (!form) return;
+    form.hidden = false;
+    var input = document.getElementById('cm-account-forgot-email');
+    var u = user();
+    if (input && u && u.email) input.value = u.email;
+    formStatus('cm-account-forgot-status', '');
+    if (input) input.focus();
+  }
+
+  function closeForgot() {
+    var form = document.getElementById('cm-account-forgot-form');
+    if (form) form.hidden = true;
+    formStatus('cm-account-forgot-status', '');
+  }
+
+  function submitForgot(event) {
+    if (event) event.preventDefault();
+    if (busy) return;
+    var input = document.getElementById('cm-account-forgot-email');
+    var email = input ? (input.value || '').trim() : '';
+    if (!email) {
+      if (input) { markInvalid(input, true); input.focus(); }
+      formStatus('cm-account-forgot-status', '请填写邮箱', 'bad');
+      return;
+    }
+    if (input) markInvalid(input, false);
+    var btn = document.getElementById('cm-account-forgot-submit');
+    busy = true;
+    if (btn) { btn.disabled = true; btn.textContent = '发送中…'; }
+    formStatus('cm-account-forgot-status', '');
+    fetch(api('/api/auth/forgot-password'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email }),
+      cache: 'no-store'
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+        return j;
+      });
+    }).then(function (j) {
+      formStatus('cm-account-forgot-status', (j && j.notice) || '如果该邮箱对应账号，我们已发送重置邮件。', 'good');
+      toast('请检查邮箱中的重置链接');
+    }).catch(function (err) {
+      formStatus('cm-account-forgot-status', (err && err.message) || '发送失败，请稍后重试', 'bad');
+    }).then(function () {
+      busy = false;
+      if (btn) { btn.disabled = false; btn.textContent = '发送重置邮件'; }
+    });
+  }
+
+  var resetToken = '';
+
+  function openReset(value) {
+    resetToken = String(value || '');
+    closeForm();
+    closeForgot();
+    closeDelete();
+    var form = document.getElementById('cm-account-reset-form');
+    if (!form) return;
+    form.hidden = false;
+    var input = document.getElementById('cm-account-reset-password');
+    if (input) { input.value = ''; input.focus(); }
+    formStatus('cm-account-reset-status', '');
+  }
+
+  function closeReset() {
+    resetToken = '';
+    var form = document.getElementById('cm-account-reset-form');
+    if (form) form.hidden = true;
+    var input = document.getElementById('cm-account-reset-password');
+    if (input) input.value = '';
+    formStatus('cm-account-reset-status', '');
+  }
+
+  function submitReset(event) {
+    if (event) event.preventDefault();
+    if (busy) return;
+    var input = document.getElementById('cm-account-reset-password');
+    var password = input ? input.value : '';
+    if (!password) {
+      if (input) { markInvalid(input, true); input.focus(); }
+      formStatus('cm-account-reset-status', '请填写新密码', 'bad');
+      return;
+    }
+    if (input) markInvalid(input, false);
+    if (!resetToken) {
+      formStatus('cm-account-reset-status', '重置链接不完整，请重新申请', 'bad');
+      return;
+    }
+    var btn = document.getElementById('cm-account-reset-submit');
+    busy = true;
+    if (btn) { btn.disabled = true; btn.textContent = '重置中…'; }
+    formStatus('cm-account-reset-status', '');
+    fetch(api('/api/auth/reset-password'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: resetToken, password: password }),
+      cache: 'no-store'
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+        return j;
+      });
+    }).then(function (j) {
+      save(null);
+      render();
+      notify();
+      closeReset();
+      stripParam('resetPassword');
+      setMode('login');
+      openForm();
+      setStatus((j && j.notice) || '密码已重置，请使用新密码登录。', 'good');
+      toast('密码已重置');
+    }).catch(function (err) {
+      formStatus('cm-account-reset-status', (err && err.message) || '重置失败，请稍后重试', 'bad');
+    }).then(function () {
+      busy = false;
+      if (btn) { btn.disabled = false; btn.textContent = '重置密码'; }
+    });
+  }
+
+  function resendVerification() {
+    var u = user();
+    if (!u) { toast('请先登录账号'); return; }
+    var btn = document.getElementById('cm-account-resend');
+    if (btn) btn.disabled = true;
+    request('/api/auth/resend-verification', { method: 'POST' }).then(function (j) {
+      toast((j && j.notice) || '验证邮件已发送');
+    }).catch(function (err) {
+      toast((err && err.message) || '验证邮件发送失败');
+    }).then(function () {
+      if (btn) btn.disabled = false;
+    });
+  }
+
+  function verifyEmail(value) {
+    var tokenValue = String(value || '');
+    if (!tokenValue) return;
+    fetch(api('/api/auth/verify-email'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: tokenValue }),
+      cache: 'no-store'
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+        return j;
+      });
+    }).then(function (j) {
+      stripParam('verifyEmail');
+      var u = user();
+      if (u && j.user && j.user.id === u.id) {
+        state.user = j.user;
+        save(state);
+        render();
+        notify();
+      }
+      toast('邮箱已验证');
+    }).catch(function (err) {
+      stripParam('verifyEmail');
+      toast((err && err.message) || '邮箱验证失败');
+    });
+  }
+
   function bind() {
     var toggle = document.getElementById('cm-account-toggle');
     var close = document.getElementById('cm-account-close');
     var form = document.getElementById('cm-account-form');
     var switcher = document.getElementById('cm-account-switch');
+    var forgotBtn = document.getElementById('cm-account-forgot');
+    var forgotForm = document.getElementById('cm-account-forgot-form');
+    var forgotClose = document.getElementById('cm-account-forgot-close');
+    var forgotCancel = document.getElementById('cm-account-forgot-cancel');
+    var resetForm = document.getElementById('cm-account-reset-form');
+    var resetClose = document.getElementById('cm-account-reset-close');
+    var resetCancel = document.getElementById('cm-account-reset-cancel');
+    var resendBtn = document.getElementById('cm-account-resend');
     var logoutBtn = document.getElementById('cm-account-logout');
     var exportBtn = document.getElementById('cm-account-export');
     var deleteBtn = document.getElementById('cm-account-delete');
@@ -322,13 +546,23 @@
     if (form) form.addEventListener('submit', submit);
     var usernameInput = document.getElementById('cm-account-username');
     var passwordInput = document.getElementById('cm-account-password');
+    var emailInput = document.getElementById('cm-account-email');
     var consentInput = document.getElementById('cm-account-consent');
     if (usernameInput) usernameInput.addEventListener('input', function () { markInvalid(usernameInput, false); });
     if (passwordInput) passwordInput.addEventListener('input', function () { markInvalid(passwordInput, false); });
+    if (emailInput) emailInput.addEventListener('input', function () { markInvalid(emailInput, false); });
     if (consentInput) consentInput.addEventListener('change', function () { markInvalid(consentInput, false); });
     if (switcher) switcher.addEventListener('click', function () {
       setMode(mode === 'register' ? 'login' : 'register');
     });
+    if (forgotBtn) forgotBtn.addEventListener('click', openForgot);
+    if (forgotForm) forgotForm.addEventListener('submit', submitForgot);
+    if (forgotClose) forgotClose.addEventListener('click', closeForgot);
+    if (forgotCancel) forgotCancel.addEventListener('click', closeForgot);
+    if (resetForm) resetForm.addEventListener('submit', submitReset);
+    if (resetClose) resetClose.addEventListener('click', closeReset);
+    if (resetCancel) resetCancel.addEventListener('click', closeReset);
+    if (resendBtn) resendBtn.addEventListener('click', resendVerification);
     if (logoutBtn) logoutBtn.addEventListener('click', logout);
     if (exportBtn) exportBtn.addEventListener('click', exportData);
     if (deleteBtn) deleteBtn.addEventListener('click', openDelete);
@@ -341,6 +575,13 @@
     state = load();
     render();
     bind();
+    try {
+      var params = new URLSearchParams(location.search);
+      var verifyToken = params.get('verifyEmail');
+      var resetValue = params.get('resetPassword');
+      if (resetValue) openReset(resetValue);
+      if (verifyToken) verifyEmail(verifyToken);
+    } catch (e) {}
     if (!state) return;
     /* 后台校验本地令牌，只在服务端明确返回 401 时清除 */
     request('/api/auth/me').then(function (j) {

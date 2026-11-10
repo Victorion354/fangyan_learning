@@ -162,3 +162,90 @@ test('关闭后重新打开仍保留数据', () => {
     cleanup(dir);
   }
 });
+
+test('旧版 SQLite 数据库缺少新增列时仍可升级并读取', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fangyan-legacy-'));
+  const dbFile = path.join(dir, 'community.sqlite');
+  const { DatabaseSync } = require('node:sqlite');
+  try {
+    const legacy = new DatabaseSync(dbFile);
+    legacy.exec(`
+      CREATE TABLE posts (
+        id TEXT PRIMARY KEY,
+        board TEXT NOT NULL,
+        province TEXT NOT NULL DEFAULT '',
+        name TEXT NOT NULL DEFAULT '匿名乡音',
+        type TEXT NOT NULL DEFAULT 'dialect',
+        text TEXT NOT NULL,
+        audio TEXT,
+        audio_name TEXT NOT NULL DEFAULT '',
+        legacy_likes INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        reply_to TEXT,
+        owner_id TEXT,
+        delete_token_hash TEXT,
+        status TEXT NOT NULL DEFAULT 'visible'
+      );
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        username_key TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL DEFAULT '',
+        password_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        consent_at INTEGER,
+        status TEXT NOT NULL DEFAULT 'active'
+      );
+      CREATE TABLE post_likes (
+        post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+        client_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (post_id, client_id)
+      );
+      CREATE TABLE reports (
+        id TEXT PRIMARY KEY,
+        post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+        reporter_id TEXT NOT NULL,
+        reporter_user_id TEXT,
+        reason TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        resolved_at INTEGER,
+        UNIQUE (post_id, reporter_id)
+      );
+      CREATE VIEW post_view AS
+        SELECT p.*, p.legacy_likes AS likes, 0 AS report_count FROM posts p;
+      INSERT INTO posts (id, board, text, created_at, status)
+        VALUES ('p-legacy', 'guangzhou', '旧库留言', 1000, 'visible');
+    `);
+    legacy.close();
+
+    const store = new CommunityStore({ dbFile, maxPosts: 500 });
+    try {
+      assert.equal(store.count(), 1);
+      const list = store.list(null, null);
+      assert.equal(list.length, 1);
+      assert.equal(list[0].id, 'p-legacy');
+      assert.equal(list[0].text, '旧库留言');
+      /* 补齐的列可正常使用 */
+      const user = store.createUser({
+        id: 'u-legacy',
+        username: 'LegacyUser',
+        usernameKey: 'legacyuser',
+        displayName: '旧用户',
+        passwordHash: 'scrypt$1$2$3$4$5',
+        email: 'legacy@example.com',
+        emailKey: 'legacy@example.com',
+        emailVerifiedAt: 0,
+        createdAt: Date.now(),
+        consentAt: Date.now()
+      });
+      assert.equal(user.email, 'legacy@example.com');
+      assert.equal(store.getUserByEmailKey('legacy@example.com').id, 'u-legacy');
+    } finally {
+      store.close();
+    }
+  } finally {
+    cleanup(dir);
+  }
+});

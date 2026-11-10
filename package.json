@@ -2,7 +2,7 @@
   "name": "fangyan-learning",
   "version": "0.1.0",
   "private": true,
-  "description": "一声一味 · 中国十大方言静态图鉴原型",
+  "description": "一声一味 · 中国十大方言学习图鉴",
   "scripts": {
     "start": "node server.js",
     "build": "node scripts/version-assets.js",

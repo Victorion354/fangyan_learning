@@ -157,6 +157,15 @@
 .cm-admin-actions button.danger{color:#9a6a62}
 .cm-admin-actions button.danger:hover{border-color:var(--cinnabar);color:var(--cinnabar)}
 .cm-admin-empty{border:1px dashed var(--line);border-radius:4px 14px 4px 14px;padding:26px;text-align:center;font-size:13px;color:var(--ink2)}
+.cm-admin-audit-bar{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin:10px 0 4px;padding:12px 14px;background:#f8f1e4;border:1px solid var(--line);border-radius:8px}
+.cm-admin-audit-bar[hidden],.cm-admin-audit-note[hidden]{display:none!important}
+.cm-admin-audit-bar .cm-field{min-width:200px;max-width:260px}
+.cm-admin-audit-actions{display:flex;gap:7px;flex-wrap:wrap;margin-left:auto}
+.cm-admin-audit-note{font-size:11.5px;line-height:1.7;color:var(--ink2);margin:6px 0 0}
+.cm-audit-item{border:1px solid var(--line);border-radius:4px 14px 4px 14px;padding:12px 16px;background:#fffdf8}
+.cm-audit-item-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px}
+.cm-audit-item-head b{font-size:13px}
+.cm-audit-detail{font-size:11.5px;line-height:1.6;color:var(--ink2);white-space:pre-wrap;overflow-wrap:anywhere}
 .cm-status.bad{color:var(--cinnabar)}
 .cm-status.good{color:#2e6b3e}
 

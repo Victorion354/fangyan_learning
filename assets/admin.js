@@ -164,6 +164,45 @@
     el.innerHTML = reports.map(reportCard).join('');
   }
 
+  var ACTION_LABELS = {
+    'admin.login': '管理员登录',
+    'post.status': '修改留言状态',
+    'post.delete': '删除留言',
+    'report.resolve': '处理举报',
+    'report.dismiss': '忽略举报',
+    'audit.export': '导出审计日志'
+  };
+
+  function auditCard(log) {
+    var detail = '';
+    if (log.detail) {
+      try { detail = JSON.stringify(JSON.parse(log.detail)); } catch (e) { detail = log.detail; }
+    }
+    return '<article class="cm-audit-item">' +
+      '<div class="cm-audit-item-head">' +
+      '<span class="cm-admin-tag pending">' + esc(ACTION_LABELS[log.action] || log.action) + '</span>' +
+      '<b>' + esc(log.actorLabel || '管理员') + '</b>' +
+      '<span class="cm-admin-meta">' + esc(new Date(log.createdAt).toLocaleString()) + '</span>' +
+      '</div>' +
+      '<div class="cm-audit-detail">' +
+      (log.targetType || log.targetId
+        ? '目标：' + esc(log.targetType || '—') + ' / ' + esc(log.targetId || '—') + '<br>'
+        : '') +
+      'IP：' + esc(log.ip || '—') + ' · UA：' + esc(log.userAgent || '—') +
+      (detail ? '<br>详情：' + esc(detail) : '') +
+      '</div></article>';
+  }
+
+  function renderAudit(logs) {
+    var el = document.getElementById('cm-admin-list');
+    if (!el) return;
+    if (!logs.length) {
+      el.innerHTML = '<div class="cm-admin-empty">还没有审计记录。管理员登录、修改留言状态、删除留言、处理举报或导出日志后会出现在这里。</div>';
+      return;
+    }
+    el.innerHTML = logs.map(auditCard).join('');
+  }
+
   function markTab(next) {
     tab = next;
     Array.prototype.forEach.call(document.querySelectorAll('.cm-admin-tab'), function (btn) {
@@ -171,6 +210,10 @@
       btn.classList.toggle('on', on);
       btn.setAttribute('aria-selected', on ? 'true' : 'false');
     });
+    var bar = document.getElementById('cm-admin-audit-bar');
+    var note = document.getElementById('cm-admin-audit-note');
+    if (bar) bar.hidden = next !== 'audit';
+    if (note) note.hidden = next !== 'audit';
   }
 
   function refresh() {
@@ -180,14 +223,23 @@
     }
     status('正在加载…');
     var overview = adminFetch('/api/admin/overview');
-    var list = tab === 'reports'
-      ? adminFetch('/api/admin/reports?status=open')
-      : adminFetch('/api/admin/posts?status=' + (tab === 'all' ? 'all' : 'pending'));
+    var list;
+    if (tab === 'audit') {
+      var action = document.getElementById('cm-admin-audit-action');
+      var actionValue = action ? action.value : '';
+      list = adminFetch('/api/admin/audit?limit=100' +
+        (actionValue ? '&action=' + encodeURIComponent(actionValue) : ''));
+    } else if (tab === 'reports') {
+      list = adminFetch('/api/admin/reports?status=open');
+    } else {
+      list = adminFetch('/api/admin/posts?status=' + (tab === 'all' ? 'all' : 'pending'));
+    }
     return Promise.all([overview, list]).then(function (results) {
       loaded = true;
       showTokenBox(false);
       renderStats(results[0]);
-      if (tab === 'reports') renderReports(results[1].reports || []);
+      if (tab === 'audit') renderAudit(results[1].logs || []);
+      else if (tab === 'reports') renderReports(results[1].reports || []);
       else renderPosts(results[1].posts || []);
       status('');
     }).catch(function (err) {
@@ -212,8 +264,15 @@
     if (input) input.removeAttribute('aria-invalid');
     setToken(value);
     if (input) input.value = '';
-    markTab('pending');
-    refresh();
+    status('正在验证令牌…');
+    adminFetch('/api/admin/session', { method: 'POST' }).then(function () {
+      markTab('pending');
+      refresh();
+    }).catch(function (err) {
+      setToken('');
+      showTokenBox(true);
+      status((err && err.message) || '管理员令牌无效', 'bad');
+    });
   }
 
   function act(path, options, done) {
@@ -227,12 +286,47 @@
     });
   }
 
+  function downloadAudit(format) {
+    if (!adminToken()) return;
+    status('正在导出…');
+    var url = api('/api/admin/audit/export?format=' + encodeURIComponent(format));
+    fetch(url, {
+      headers: { 'X-Admin-Token': adminToken() },
+      cache: 'no-store'
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          throw new Error((j && j.error) || ('HTTP ' + r.status));
+        });
+      }
+      return r.blob().then(function (blob) {
+        var stamp = new Date().toISOString().slice(0, 10);
+        var objectUrl = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = 'fangyan-audit-' + stamp + '.' + (format === 'json' ? 'json' : 'csv');
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 2000);
+        status('审计日志已导出');
+        if (tab === 'audit') refresh();
+      });
+    }).catch(function (err) {
+      status((err && err.message) || '导出失败，请稍后重试', 'bad');
+    });
+  }
+
   function bind() {
     var toggle = document.getElementById('cm-admin-toggle');
     var close = document.getElementById('cm-admin-close');
     var enterBtn = document.getElementById('cm-admin-enter');
     var tokenInput = document.getElementById('cm-admin-token');
     var list = document.getElementById('cm-admin-list');
+    var auditAction = document.getElementById('cm-admin-audit-action');
+    var auditRefresh = document.getElementById('cm-admin-audit-refresh');
+    var auditCsv = document.getElementById('cm-admin-audit-csv');
+    var auditJson = document.getElementById('cm-admin-audit-json');
     if (toggle) toggle.addEventListener('click', openPanel);
     if (close) close.addEventListener('click', closePanel);
     if (enterBtn) enterBtn.addEventListener('click', enter);
@@ -248,6 +342,10 @@
         refresh();
       });
     });
+    if (auditAction) auditAction.addEventListener('change', function () { if (tab === 'audit') refresh(); });
+    if (auditRefresh) auditRefresh.addEventListener('click', function () { if (tab === 'audit') refresh(); });
+    if (auditCsv) auditCsv.addEventListener('click', function () { downloadAudit('csv'); });
+    if (auditJson) auditJson.addEventListener('click', function () { downloadAudit('json'); });
     if (!list) return;
     list.addEventListener('click', function (e) {
       var action = e.target.closest('[data-admin-action]');

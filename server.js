@@ -33,14 +33,19 @@ const { createStore } = require('./lib/store.js');
 const { createRedis } = require('./lib/redis.js');
 const { createObjectStore, audioExtension } = require('./lib/object-store.js');
 const { createModerator, parseKeywords } = require('./lib/moderation.js');
+const { createMailer } = require('./lib/mailer.js');
 const {
   normalizeUsername,
   validUsername,
+  normalizeEmail,
+  validEmail,
   passwordProblem,
   hashPassword,
   verifyPassword,
   createSessionToken,
   hashSessionToken,
+  createEmailToken,
+  hashEmailToken,
   newUserId,
   publicUser,
   DUMMY_PASSWORD_HASH
@@ -90,6 +95,30 @@ const USER_SESSION_TTL_MS = (() => {
   return Math.min(value, 180 * 24 * 60 * 60 * 1000);
 })();
 const REPORT_HIDE_THRESHOLD = Math.max(1, Number(process.env.REPORT_HIDE_THRESHOLD) || 3);
+const MAIL_PROVIDER = String(process.env.MAIL_PROVIDER || '').trim();
+const MAIL_FROM = String(process.env.MAIL_FROM || 'no-reply@localhost').trim();
+const MAIL_FROM_NAME = String(process.env.MAIL_FROM_NAME || '一声一味').trim();
+const MAIL_TIMEOUT_MS = Math.min(30000, Math.max(1000, Number(process.env.MAIL_TIMEOUT_MS) || 10000));
+const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+const EMAIL_VERIFY_TTL_MS = (() => {
+  const value = Number(process.env.EMAIL_VERIFY_TTL_MS);
+  if (!Number.isFinite(value) || value < 60000) return 24 * 60 * 60 * 1000;
+  return Math.min(value, 7 * 24 * 60 * 60 * 1000);
+})();
+const EMAIL_RESET_TTL_MS = (() => {
+  const value = Number(process.env.EMAIL_RESET_TTL_MS);
+  if (!Number.isFinite(value) || value < 60000) return 30 * 60 * 1000;
+  return Math.min(value, 24 * 60 * 60 * 1000);
+})();
+const AUDIT_EXPORT_LIMIT = Math.min(20000, Math.max(100, Number(process.env.AUDIT_EXPORT_LIMIT) || 5000));
+const mailer = createMailer({
+  provider: MAIL_PROVIDER,
+  from: MAIL_FROM,
+  fromName: MAIL_FROM_NAME,
+  resendApiKey: process.env.RESEND_API_KEY,
+  sendgridApiKey: process.env.SENDGRID_API_KEY,
+  timeoutMs: MAIL_TIMEOUT_MS
+});
 const moderator = createModerator({
   enabled: String(process.env.MODERATION_ENABLED || '').toLowerCase() !== 'false',
   extraKeywords: parseKeywords(process.env.MODERATION_KEYWORDS)
@@ -256,6 +285,166 @@ async function issueUserSession(userId) {
     expiresAt: expiresAt
   });
   return { token: token, expiresAt: expiresAt };
+}
+
+/* ===== 邮件与审计辅助 ===== */
+
+function requestIp(req) {
+  const forwarded = TRUST_PROXY
+    ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+    : '';
+  return forwarded || (req.socket && req.socket.remoteAddress) || 'unknown';
+}
+
+function adminTokenFrom(req) {
+  return String(req.headers['x-admin-token'] || '').trim();
+}
+
+function adminFingerprint(token) {
+  if (!token) return '';
+  return hashToken(token).slice(0, 12);
+}
+
+async function writeAudit(req, action, options) {
+  const opts = options || {};
+  try {
+    await store.createAuditLog({
+      id: 'a' + Date.now().toString(36) + crypto.randomBytes(6).toString('hex'),
+      actorType: 'admin',
+      actorLabel: adminFingerprint(adminTokenFrom(req)),
+      action: action,
+      targetType: opts.targetType || '',
+      targetId: opts.targetId || '',
+      detail: opts.detail ? JSON.stringify(opts.detail).slice(0, 2000) : '',
+      ip: requestIp(req).slice(0, 128),
+      userAgent: String(req.headers['user-agent'] || '').slice(0, 512),
+      createdAt: Date.now()
+    });
+  } catch (err) {
+    /* 审计失败不阻断管理操作，但要在服务端留下记录 */
+    console.warn('写入审计日志失败：' + err.message);
+  }
+}
+
+function publicBaseUrl(req) {
+  if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL;
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() ||
+    ((req.socket && req.socket.encrypted) ? 'https' : 'http');
+  const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+    .split(',')[0].trim();
+  const host = /^[A-Za-z0-9.\-:\[\]]{1,255}$/.test(rawHost) ? rawHost : 'localhost:' + PORT;
+  return proto + '://' + host;
+}
+
+function maskEmail(email) {
+  const value = String(email || '');
+  const at = value.indexOf('@');
+  if (at <= 0) return '';
+  const name = value.slice(0, at);
+  const domain = value.slice(at + 1);
+  const head = name.slice(0, Math.min(2, name.length));
+  return head + '***@' + domain;
+}
+
+async function sendMailSafe(message) {
+  try {
+    await mailer.send(message);
+    return true;
+  } catch (err) {
+    console.warn('邮件发送失败：' + err.message);
+    return false;
+  }
+}
+
+async function issueEmailToken(userId, kind, ttlMs) {
+  await store.deleteEmailTokens(userId, kind);
+  const token = createEmailToken();
+  const now = Date.now();
+  await store.createEmailToken({
+    tokenHash: hashEmailToken(token),
+    userId: userId,
+    kind: kind,
+    createdAt: now,
+    expiresAt: now + ttlMs
+  });
+  return token;
+}
+
+function emailPageUrl(req, query) {
+  return publicBaseUrl(req) + encodeURI('/方言学习页.html') + '?' + query;
+}
+
+async function sendVerificationEmail(req, user) {
+  if (!user || !user.email) return false;
+  const token = await issueEmailToken(user.id, 'verify', EMAIL_VERIFY_TTL_MS);
+  const link = emailPageUrl(req, 'verifyEmail=' + encodeURIComponent(token));
+  const name = user.displayName || user.username;
+  return sendMailSafe({
+    to: user.email,
+    subject: '验证你的邮箱 · 一声一味',
+    text: [
+      '你好 ' + name + '：',
+      '',
+      '感谢注册一声一味。请打开下面的链接验证邮箱，链接 ' + Math.round(EMAIL_VERIFY_TTL_MS / 3600000) + ' 小时内有效：',
+      link,
+      '',
+      '如果这不是你的操作，请忽略这封邮件，账号不会受到影响。',
+      '',
+      '一声一味 · 乡音社区'
+    ].join('\n'),
+    html: '<p>你好 ' + escapeHtml(name) + '：</p>' +
+      '<p>感谢注册一声一味。请打开下面的链接验证邮箱，链接 ' +
+      Math.round(EMAIL_VERIFY_TTL_MS / 3600000) + ' 小时内有效：</p>' +
+      '<p><a href="' + escapeHtml(link) + '">' + escapeHtml(link) + '</a></p>' +
+      '<p>如果这不是你的操作，请忽略这封邮件，账号不会受到影响。</p>' +
+      '<p>一声一味 · 乡音社区</p>'
+  });
+}
+
+async function sendPasswordResetEmail(req, user) {
+  if (!user || !user.email) return false;
+  const token = await issueEmailToken(user.id, 'reset', EMAIL_RESET_TTL_MS);
+  const link = emailPageUrl(req, 'resetPassword=' + encodeURIComponent(token));
+  const name = user.displayName || user.username;
+  return sendMailSafe({
+    to: user.email,
+    subject: '重置密码 · 一声一味',
+    text: [
+      '你好 ' + name + '：',
+      '',
+      '我们收到重置一声一味账号密码的请求。请打开下面的链接设置新密码，链接 ' +
+        Math.round(EMAIL_RESET_TTL_MS / 60000) + ' 分钟内有效：',
+      link,
+      '',
+      '如果这不是你的操作，请忽略这封邮件，当前密码仍然有效。',
+      '',
+      '一声一味 · 乡音社区'
+    ].join('\n'),
+    html: '<p>你好 ' + escapeHtml(name) + '：</p>' +
+      '<p>我们收到重置一声一味账号密码的请求。请打开下面的链接设置新密码，链接 ' +
+      Math.round(EMAIL_RESET_TTL_MS / 60000) + ' 分钟内有效：</p>' +
+      '<p><a href="' + escapeHtml(link) + '">' + escapeHtml(link) + '</a></p>' +
+      '<p>如果这不是你的操作，请忽略这封邮件，当前密码仍然有效。</p>' +
+      '<p>一声一味 · 乡音社区</p>'
+  });
+}
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[c]));
+}
+
+function csvCell(value) {
+  let text = String(value == null ? '' : value);
+  /* 防止 CSV 公式注入 */
+  if (/^[=+\-@]/.test(text)) text = "'" + text;
+  if (/[",\r\n]/.test(text)) text = '"' + text.replace(/"/g, '""') + '"';
+  return text;
 }
 
 function base64url(value) {
@@ -718,9 +907,16 @@ async function handleApi(req, res, url) {
     const problem = passwordProblem(body.password);
     if (problem) throw httpError(400, problem);
     if (body.consent !== true) throw httpError(400, '注册前请阅读并同意隐私政策');
+    const email = normalizeEmail(clean(body.email, 254));
+    if (email && !validEmail(email)) {
+      throw httpError(400, '邮箱格式不正确');
+    }
     const usernameKey = normalizeUsername(username);
     if (await store.getUserByUsernameKey(usernameKey)) {
       throw httpError(409, '用户名已被占用');
+    }
+    if (email && await store.getUserByEmailKey(email)) {
+      throw httpError(409, '该邮箱已绑定其他账号');
     }
     const now = Date.now();
     let user;
@@ -731,21 +927,33 @@ async function handleApi(req, res, url) {
         usernameKey: usernameKey,
         displayName: clean(body.displayName, 20) || username,
         passwordHash: await hashPassword(String(body.password)),
+        email: email,
+        emailKey: email || null,
+        emailVerifiedAt: 0,
         createdAt: now,
         consentAt: now
       });
     } catch (err) {
       if (/unique|duplicate|UNIQUE/i.test(String(err.message))) {
+        if (email) throw httpError(409, '用户名或邮箱已被占用');
         throw httpError(409, '用户名已被占用');
       }
       throw err;
     }
     const session = await issueUserSession(user.id);
-    sendJson(res, 201, {
+    const payload = {
       user: publicUser(user),
       token: session.token,
       expiresAt: session.expiresAt
-    });
+    };
+    if (email) {
+      const sent = await sendVerificationEmail(req, user);
+      payload.emailSent = sent;
+      payload.emailNotice = sent
+        ? '验证邮件已发送到 ' + maskEmail(email) + '，请查收。'
+        : '账号已创建，但验证邮件暂时没有发出；可稍后在账号面板重新发送。';
+    }
+    sendJson(res, 201, payload);
     return;
   }
 
@@ -781,7 +989,96 @@ async function handleApi(req, res, url) {
 
   if (pathname === '/api/auth/me' && method === 'GET') {
     const me = requireUser(account);
-    sendJson(res, 200, { user: publicUser(me) });
+    const full = await store.getUserById(me.id);
+    if (!full) throw httpError(401, '账号不存在');
+    sendJson(res, 200, { user: publicUser(full) });
+    return;
+  }
+
+  if (pathname === '/api/auth/verify-email' && method === 'POST') {
+    await rateLimit(req, 'email-verify', 20, 600000);
+    const body = await readBody(req);
+    const token = clean(body.token, 512);
+    if (!token) throw httpError(400, '验证链接不完整');
+    const record = await store.getEmailToken(hashEmailToken(token), Date.now());
+    if (!record || record.kind !== 'verify') {
+      throw httpError(400, '验证链接无效或已过期，请重新发送验证邮件');
+    }
+    const user = await store.getUserById(record.userId);
+    if (!user) throw httpError(404, '账号不存在');
+    await store.setEmailVerified(user.id, Date.now());
+    await store.useEmailToken(record.tokenHash, Date.now());
+    await store.deleteEmailTokens(user.id, 'verify');
+    sendJson(res, 200, {
+      ok: true,
+      user: publicUser(await store.getUserById(user.id)),
+      notice: '邮箱已验证。'
+    });
+    return;
+  }
+
+  if (pathname === '/api/auth/resend-verification' && method === 'POST') {
+    await rateLimit(req, 'email-resend', 5, 600000);
+    const me = requireUser(account);
+    const user = await store.getUserById(me.id);
+    if (!user) throw httpError(401, '账号不存在');
+    if (!user.email) throw httpError(400, '当前账号没有绑定邮箱');
+    if (user.emailVerifiedAt) throw httpError(409, '邮箱已经验证，无需重复发送');
+    const sent = await sendVerificationEmail(req, user);
+    if (!sent) throw httpError(503, '验证邮件暂时无法发送，请稍后重试');
+    sendJson(res, 200, {
+      ok: true,
+      email: maskEmail(user.email),
+      notice: '验证邮件已重新发送到 ' + maskEmail(user.email) + '。'
+    });
+    return;
+  }
+
+  if (pathname === '/api/auth/forgot-password' && method === 'POST') {
+    await rateLimit(req, 'email-forgot', 5, 600000);
+    const body = await readBody(req);
+    const email = normalizeEmail(clean(body.email, 254));
+    const generic = {
+      ok: true,
+      notice: '如果该邮箱对应账号，我们已发送重置邮件，请查收。'
+    };
+    if (!validEmail(email)) {
+      sendJson(res, 200, generic);
+      return;
+    }
+    const user = await store.getUserByEmailKey(email);
+    if (user && user.status === 'active') {
+      /* 不阻塞响应，避免通过响应耗时判断邮箱是否存在 */
+      sendPasswordResetEmail(req, user).catch((err) => {
+        console.warn('发送密码重置邮件失败：' + err.message);
+      });
+    }
+    sendJson(res, 200, generic);
+    return;
+  }
+
+  if (pathname === '/api/auth/reset-password' && method === 'POST') {
+    await rateLimit(req, 'email-reset', 10, 600000);
+    const body = await readBody(req);
+    const token = clean(body.token, 512);
+    if (!token) throw httpError(400, '重置链接不完整');
+    const problem = passwordProblem(body.password);
+    if (problem) throw httpError(400, problem);
+    const record = await store.getEmailToken(hashEmailToken(token), Date.now());
+    if (!record || record.kind !== 'reset') {
+      throw httpError(400, '重置链接无效或已过期，请重新申请');
+    }
+    const user = await store.getUserById(record.userId);
+    if (!user) throw httpError(404, '账号不存在');
+    await store.updateUserPassword(user.id, await hashPassword(String(body.password)));
+    await store.useEmailToken(record.tokenHash, Date.now());
+    await store.deleteEmailTokens(user.id, 'reset');
+    /* 改密后让其他设备上的旧登录全部失效 */
+    await store.deleteUserSessions(user.id);
+    sendJson(res, 200, {
+      ok: true,
+      notice: '密码已重置，请使用新密码登录。'
+    });
     return;
   }
 
@@ -800,7 +1097,10 @@ async function handleApi(req, res, url) {
         uploads: objectStore ? 'presigned' : 'inline',
         accounts: true,
         moderation: moderator.enabled,
-        reports: true
+        reports: true,
+        email: mailer.provider,
+        emailDelivery: mailer.enabled ? 'configured' : 'console-only',
+        auditLogs: true
       }
     });
     return;
@@ -890,11 +1190,19 @@ async function handleApi(req, res, url) {
     if (!post) throw httpError(404, '留言不存在');
     const deleteToken = String(req.headers['x-delete-token'] || '').trim();
     const adminToken = String(req.headers['x-admin-token'] || '').trim();
+    const adminDelete = adminMatches(adminToken);
     const allowed = tokenMatches(deleteToken, post.deleteTokenHash) ||
-      adminMatches(adminToken) ||
+      adminDelete ||
       !!(account && post.userId === account.id);
     if (!allowed) throw httpError(403, '没有删除权限：需要发布时保存的删除令牌，或登录发布账号');
     await store.remove(post.id);
+    if (adminDelete) {
+      await writeAudit(req, 'post.delete', {
+        targetType: 'post',
+        targetId: post.id,
+        detail: { board: post.board, status: post.status }
+      });
+    }
     if (post.audioKey && objectStore) {
       objectStore.remove(post.audioKey).catch((err) => {
         console.warn('删除语音对象失败：' + err.message);
@@ -994,7 +1302,94 @@ async function handleApi(req, res, url) {
     return;
   }
 
-  /* ===== 管理员：概览 / 留言 / 举报 ===== */
+  /* ===== 管理员：会话 / 审计 / 概览 / 留言 / 举报 ===== */
+
+  if (pathname === '/api/admin/session' && (method === 'GET' || method === 'POST')) {
+    requireAdmin(req);
+    if (method === 'POST') {
+      await writeAudit(req, 'admin.login', {});
+    }
+    sendJson(res, 200, {
+      ok: true,
+      fingerprint: adminFingerprint(adminTokenFrom(req)),
+      email: {
+        provider: mailer.provider,
+        enabled: mailer.enabled
+      },
+      auditLogs: true
+    });
+    return;
+  }
+
+  if (pathname === '/api/admin/audit' && method === 'GET') {
+    requireAdmin(req);
+    const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 100));
+    const logs = await store.listAuditLogs({
+      action: clean(url.searchParams.get('action'), 64),
+      targetType: clean(url.searchParams.get('targetType'), 32),
+      targetId: clean(url.searchParams.get('targetId'), 64),
+      before: Number(url.searchParams.get('before')) || 0,
+      limit: limit
+    });
+    sendJson(res, 200, {
+      logs: logs,
+      total: await store.countAuditLogs(),
+      limit: limit
+    });
+    return;
+  }
+
+  if (pathname === '/api/admin/audit/export' && method === 'GET') {
+    requireAdmin(req);
+    const format = String(url.searchParams.get('format') || 'csv').toLowerCase() === 'json'
+      ? 'json'
+      : 'csv';
+    const logs = await store.listAuditLogs({ limit: AUDIT_EXPORT_LIMIT });
+    await writeAudit(req, 'audit.export', {
+      targetType: 'audit',
+      targetId: format,
+      detail: { format: format, count: logs.length }
+    });
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    let body;
+    let contentType;
+    let filename;
+    if (format === 'json') {
+      body = Buffer.from(JSON.stringify({
+        exportedAt: new Date().toISOString(),
+        count: logs.length,
+        logs: logs
+      }, null, 2), 'utf8');
+      contentType = 'application/json; charset=utf-8';
+      filename = 'fangyan-audit-' + stamp + '.json';
+    } else {
+      const header = ['时间', '操作', '操作者指纹', '目标类型', '目标ID', 'IP', 'User-Agent', '详情'];
+      const rows = logs.map((log) => [
+        new Date(log.createdAt).toISOString(),
+        log.action,
+        log.actorLabel,
+        log.targetType,
+        log.targetId,
+        log.ip,
+        log.userAgent,
+        log.detail
+      ]);
+      const csv = '\ufeff' + [header].concat(rows)
+        .map((row) => row.map(csvCell).join(','))
+        .join('\r\n') + '\r\n';
+      body = Buffer.from(csv, 'utf8');
+      contentType = 'text/csv; charset=utf-8';
+      filename = 'fangyan-audit-' + stamp + '.csv';
+    }
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Disposition': 'attachment; filename="' + filename + '"',
+      'Cache-Control': 'no-store',
+      'Content-Length': body.length
+    });
+    res.end(body);
+    return;
+  }
 
   if (pathname === '/api/admin/overview' && method === 'GET') {
     requireAdmin(req);
@@ -1028,6 +1423,11 @@ async function handleApi(req, res, url) {
     if (!POST_STATUSES.has(body.status)) throw httpError(400, '留言状态不合法');
     const changed = await store.setStatus(adminPostMatch[1], body.status);
     if (!changed) throw httpError(404, '留言不存在');
+    await writeAudit(req, 'post.status', {
+      targetType: 'post',
+      targetId: adminPostMatch[1],
+      detail: { status: body.status }
+    });
     await broadcastRefresh();
     sendJson(res, 200, {
       ok: true,
@@ -1066,6 +1466,14 @@ async function handleApi(req, res, url) {
       hidden = await store.setStatus(report.postId, 'hidden');
       await broadcastRefresh();
     }
+    await writeAudit(req, action === 'resolved' ? 'report.resolve' : 'report.dismiss', {
+      targetType: 'report',
+      targetId: report.id,
+      detail: {
+        postId: report.postId,
+        hidePost: hidden
+      }
+    });
     sendJson(res, 200, { ok: true, hidden: hidden });
     return;
   }
@@ -1304,6 +1712,13 @@ async function start() {
     console.warn('清理过期登录会话失败：' + err.message);
   }
 
+  try {
+    const prunedTokens = await store.pruneEmailTokens(Date.now());
+    if (prunedTokens > 0) console.log('已清理 ' + prunedTokens + ' 个过期邮箱令牌');
+  } catch (err) {
+    console.warn('清理过期邮箱令牌失败：' + err.message);
+  }
+
   server = createHttpServer();
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
@@ -1325,6 +1740,9 @@ async function start() {
     console.log('  社区数据层：' + (store.driver === 'postgres' ? 'PostgreSQL' : 'SQLite ' + COMMUNITY_DB));
     console.log('  Redis：' + (redis ? '已连接（限流 + SSE 广播）' : '未启用（单实例内存模式）'));
     console.log('  对象存储：' + (objectStore ? 'S3 兼容 / ' + objectStore.bucket : '未启用（语音内联存储）'));
+    console.log('  邮件服务：' + mailer.provider + (mailer.enabled ? '' : '（不会真实发信）') +
+      ' / 发件人 ' + MAIL_FROM);
+    console.log('  审计日志：已启用（管理员操作写入数据库）');
     console.log('  旧社区 JSON：' + COMMUNITY_FILE + '（仅首次导入）');
     console.log('  人口数据：' + POPULATION_FILE);
     console.log('  按 Ctrl+C 停止。');
