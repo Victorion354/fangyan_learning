@@ -10,7 +10,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23B23A30'/%3E%3Cpath d='M20 44h24M24 34h16M27 24h10' stroke='%23F1EAE0' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/main.css?v=04682dc16b">
 <link rel="stylesheet" href="assets/nav.css?v=2d182d1c5b">
-<link rel="stylesheet" href="assets/privacy.css?v=80a6ba90b9">
+<link rel="stylesheet" href="assets/privacy.css?v=d8da80b109">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -41,7 +41,7 @@
 
         <div class="pp-notice">
           <strong>说明：本页说明当前部署的信息处理方式与能力边界。</strong>
-          当前版本已接入邮箱验证、密码找回和管理员操作审计日志；邮件默认只在开发环境打印到服务端控制台，配置正式邮件服务后才会真实发信。正式公开上线前，运营方将补充主体名称、注册地址、隐私事务联系人及有效联系方式、数据存储所在地与投诉举报渠道，并完成适用的合规审查；相关安排见第十一节“联系与运营方信息”。本页不构成法律意见。
+          当前版本已接入邮箱验证、密码找回和管理员操作审计日志；邮件默认只在开发环境打印到服务端控制台，配置正式邮件服务后才会真实发信。运营方可通过部署配置填写主体名称、注册地址、隐私事务联系人及有效联系方式、数据存储所在地与投诉举报渠道，未填写时页面会明确标注“上线前补充”；正式公开服务前还需完成适用的合规审查。相关安排见第十一节“联系与运营方信息”。本页不构成法律意见。
         </div>
 
         <section>
@@ -190,14 +190,16 @@
 
         <section>
           <h3>十一、联系与运营方信息</h3>
-          <p>以下为当前部署的运营与联系安排；标注“上线前补充”的内容将在正式公开服务前更新。</p>
+          <p>以下为当前部署的运营与联系安排；未配置的项目会明确标注“上线前补充”。</p>
           <ul>
-            <li><strong>运营主体：</strong>一声一味项目组；注册主体全称与注册地址上线前补充。</li>
-            <li><strong>隐私事务联系人：</strong>可通过乡音社区的留言或举报入口联系项目组；专用邮箱与有效联系方式上线前补充。</li>
-            <li><strong>数据存储所在地：</strong>开发环境默认使用本机 SQLite；生产环境可使用部署所在地的 PostgreSQL，并将语音保存于所配置的 S3 兼容对象存储；具体区域随部署配置确定。</li>
-            <li><strong>投诉、举报与监管对接：</strong>社区提供留言举报入口，由管理员处理；监管对接渠道上线前补充。</li>
+            <li><strong>运营主体：</strong><span id="site-operator-name">一声一味项目组（注册主体全称上线前补充）</span></li>
+            <li><strong>注册地址：</strong><span id="site-operator-address">上线前补充</span></li>
+            <li><strong>隐私事务联系人：</strong><span id="site-privacy-contact-name">可通过乡音社区的留言或举报入口联系项目组（联系人上线前补充）</span> · <span id="site-privacy-email">专用邮箱上线前补充</span></li>
+            <li><strong>数据存储所在地：</strong><span id="site-data-region">开发环境默认使用本机 SQLite；生产环境按部署配置确定，具体区域上线前补充</span></li>
+            <li><strong>投诉与举报：</strong><span id="site-complaint-contact">社区留言与举报入口由管理员处理；专用投诉渠道上线前补充</span></li>
+            <li><strong>监管对接：</strong><span id="site-supervisor-contact">上线前补充</span></li>
           </ul>
-          <p class="pp-warn">在运营主体、联系方式与合规审查完成前，本服务不面向公众正式运营。</p>
+          <p class="pp-warn" id="site-config-warning">在运营主体、注册地址、专用邮箱与合规审查完成前，本服务不面向公众正式运营。</p>
         </section>
 
         <div class="pp-back">
@@ -219,5 +221,6 @@
   </div>
 </footer>
 <script src="assets/nav.js?v=b3f84cab41"></script>
+<script src="assets/site-info.js?v=9b18f94954"></script>
 </body>
 </html>

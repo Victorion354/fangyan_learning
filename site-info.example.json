@@ -1,0 +1,10 @@
+{
+  "_readme": "复制为 site-info.json 后填写真实信息；该文件已被 .gitignore 忽略，不会提交。留空表示尚未配置，隐私政策页会显示“上线前补充”。",
+  "operatorName": "",
+  "operatorAddress": "",
+  "privacyEmail": "",
+  "privacyContactName": "",
+  "complaintContact": "",
+  "supervisorContact": "",
+  "dataRegion": ""
+}

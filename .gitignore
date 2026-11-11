@@ -15,3 +15,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# 真实运营主体与隐私联系信息（上线前由运营方填写，不应提交）
+site-info.json

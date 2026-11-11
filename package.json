@@ -5,10 +5,14 @@
   "description": "一声一味 · 中国十大方言学习图鉴",
   "scripts": {
     "start": "node server.js",
+    "start:env": "node --env-file-if-exists=.env server.js",
     "build": "node scripts/version-assets.js",
     "check": "node scripts/check.js",
     "demo:seed": "node scripts/demo-data.js seed",
     "demo:reset": "node scripts/demo-data.js reset",
+    "deploy:check": "node scripts/verify-deploy.js",
+    "deploy:check:prod": "node scripts/verify-deploy.js --production",
+    "mail:test": "node scripts/mail-test.js",
     "test": "node --test tests/data.test.js tests/store.test.js tests/adapters.test.js tests/accounts.test.js tests/server.test.js"
   },
   "engines": {

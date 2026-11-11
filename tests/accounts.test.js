@@ -151,6 +151,14 @@ before(async () => {
       MAIL_PROVIDER: 'console',
       MAIL_FROM: 'no-reply@test.local',
       PUBLIC_BASE_URL: base,
+      SITE_INFO_FILE: path.join(tempDir, 'site-info.json'),
+      OPERATOR_NAME: '',
+      OPERATOR_ADDRESS: '',
+      PRIVACY_EMAIL: '',
+      PRIVACY_CONTACT_NAME: '',
+      COMPLAINT_CONTACT: '',
+      SUPERVISOR_CONTACT: '',
+      DATA_REGION: '',
       REPORT_HIDE_THRESHOLD: '3'
     }),
     stdio: ['ignore', 'pipe', 'pipe']

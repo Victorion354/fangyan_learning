@@ -103,6 +103,7 @@ server.js               社区服务：静态托管 + 社区 API/SSE + 人口 AP
 lib/
   accounts.js           scrypt 密码哈希、用户名/邮箱校验、账号与邮箱令牌
   mailer.js             邮件适配层（console / Resend / SendGrid，零依赖 HTTPS API）
+  site-info.js          运营主体与隐私联系信息加载（JSON / 环境变量）
   moderation.js         垃圾广告/诈骗等关键词过滤与广告特征检测
   community-store.js    SQLite 数据层（Node 内置 node:sqlite，开发默认）
   postgres-store.js     PostgreSQL 数据层（生产可选）
@@ -120,9 +121,12 @@ scripts/
   demo-data.js          演示数据：seed / reset，预置游客、普通用户、管理员与待审/举报样本
   check.js              静态数据、页面引用、脚本语法与本地资源检查
   version-assets.js     按内容哈希刷新 JS/CSS 版本号
+  verify-deploy.js      部署环境自检：密钥、邮件、运营主体、数据库、Redis、S3 与线上 HTTP
+  mail-test.js          使用当前邮件配置发送测试邮件
 Dockerfile              生产镜像（安装可选依赖）
 docker-compose.yml      应用 + PostgreSQL + Redis + RustFS + Caddy
 .env.example            部署环境变量模板
+site-info.example.json  运营主体与隐私联系信息模板（复制为 site-info.json，已被 gitignore）
 assets/
   data/
     dialects.js         方言共享数据：主页、详情页、社区与服务端共用（唯一数据源）
@@ -145,6 +149,7 @@ assets/
   insight.css           数据观察 / 保护行动 / 数据与方法页样式
   insight.js            原生 SVG 图表、行动清单与来源列表渲染
   privacy.css           隐私政策页样式
+  site-info.js          隐私政策页：从 /api/site-info 填入运营主体与联系信息
   mapdata.js            离线省界 SVG 路径 + 投影参数
   chinageo.js           简化后的省级 GeoJSON，供 Leaflet 在线地图使用
   china.json            省界 GeoJSON 源数据
@@ -245,7 +250,7 @@ UPLOAD_TTL_SECONDS=300
 
 社区写操作使用服务端签发的匿名会话：页面先请求 `POST /api/session`，服务端返回带过期时间的 HMAC 签名令牌与随机客户端 ID，后续通过 `X-Client-Token` 或 `Authorization: Bearer <token>` 提交。读取接口仍兼容旧的 `X-Client-Id`，但发布和点赞不再接受只带客户端 ID 的请求。设置固定的 `CLIENT_TOKEN_SECRET` 后，服务重启不会让已签发令牌立即失效。
 
-测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入、对象存储未配置时的降级行为、人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化、旧 JSON 导入、旧库缺列升级和数据层/对象存储适配器；账号测试覆盖注册校验、大小写不敏感重名、登录/退出、隐私同意、邮箱验证、忘记密码与重置、账号留言归属与删除、关键词待审、举报去重与阈值、管理员接口、管理员审计日志与 CSV/JSON 导出、数据导出与注销。当前共 56 项测试。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
+测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入、对象存储未配置时的降级行为、人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化、旧 JSON 导入、旧库缺列升级和数据层/对象存储适配器；账号测试覆盖注册校验、大小写不敏感重名、登录/退出、隐私同意、邮箱验证、忘记密码与重置、账号留言归属与删除、关键词待审、举报去重与阈值、管理员接口、管理员审计日志与 CSV/JSON 导出、数据导出与注销；适配器测试覆盖运营主体配置加载、缺失字段/非法邮箱与邮件服务商选择。当前共 60 项测试。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
 
 `server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。
 
@@ -321,6 +326,64 @@ docker compose up -d --build
 - 删除留言时会同步删除对应语音对象；但超过留言上限被自动裁剪的旧留言，其对象暂不会自动清理，需要后续加定时清理任务。
 - Redis 不可用时服务会回退到单实例内存限流；生产环境建议监控 Redis 连接。
 - 账号、内容审核、举报、邮箱验证、密码找回、管理审计日志与隐私流程已接入，但仍缺少双因素认证和自动化数据保留任务，**不能直接当作公开上线服务**。
+
+## 上线前配置与部署自检
+
+### 运营主体与隐私联系信息
+
+真实主体名称、注册地址与专用邮箱必须由运营方提供，仓库不会预置任何虚构值。两种配置方式任选其一，环境变量优先级更高：
+
+1. 复制 `site-info.example.json` 为 `site-info.json` 并填写；该文件已被 `.gitignore` 忽略。
+2. 在 `.env` 或部署平台中设置：
+
+```bash
+OPERATOR_NAME=运营主体全称
+OPERATOR_ADDRESS=注册地址
+PRIVACY_EMAIL=privacy@example.com
+PRIVACY_CONTACT_NAME=隐私事务联系人（可选）
+COMPLAINT_CONTACT=投诉举报渠道（可选）
+SUPERVISOR_CONTACT=监管对接渠道（可选）
+DATA_REGION=数据存储所在地（可选）
+```
+
+服务启动时会读取这些信息，并通过 `GET /api/site-info` 返回公开字段。隐私政策页第十一节会自动填入已配置内容；未配置时保留“上线前补充”并显示明确提示。`/api/health` 的 `features.siteInfo` 会显示是否已配置。`site-info.json` 与 `site-info.example.json` 均不会被静态服务公开。
+
+### 正式邮件服务
+
+```bash
+MAIL_PROVIDER=resend            # 或 sendgrid
+MAIL_FROM=no-reply@你的域名
+MAIL_FROM_NAME=一声一味
+MAIL_REPLY_TO=contact@你的域名   # 可选
+RESEND_API_KEY=...              # 使用 Resend 时填写
+SENDGRID_API_KEY=...            # 使用 SendGrid 时填写
+PUBLIC_BASE_URL=https://你的域名
+```
+
+配置后可先发送测试邮件：
+
+```bash
+npm run mail:test -- you@example.com
+```
+
+`console` 模式只把邮件打印到控制台，不会真实投递；正式上线必须切换到 `resend` 或 `sendgrid`。
+
+### 部署自检
+
+```bash
+npm run deploy:check             # 开发 / 预发布检查
+npm run deploy:check:prod        # 按正式上线要求检查，关键配置缺失时返回非零退出码
+npm run deploy:check -- --base-url https://example.com
+npm run deploy:check -- --send-mail-to you@example.com
+```
+
+自检会读取 `.env` 与当前环境变量，检查 Node 版本、匿名会话密钥、管理员令牌、`PUBLIC_BASE_URL`、邮件服务、运营主体信息、数据库连接、Redis、对象存储配置，并在传入 `--base-url` 时检查线上健康接口、隐私页、CSP 与敏感文件屏蔽。输出不会包含密钥明文。部署后建议把 `npm run deploy:check:prod -- --base-url https://你的域名` 作为发布前必跑步骤。
+
+本地想让 `server.js` 读取 `.env` 时，可用：
+
+```bash
+npm run start:env
+```
 
 ## 性能与 SEO
 
@@ -408,6 +471,7 @@ docker compose up -d --build
 | `POST` | `/api/admin/reports/:id` | 处理举报；body `{ action: "resolve" \| "dismiss", hidePost?: true }` | `X-Admin-Token` |
 | `GET` | `/api/admin/audit` | 审计日志列表，可按 `action`、`targetType`、`targetId`、`before`、`limit` 筛选 | `X-Admin-Token` |
 | `GET` | `/api/admin/audit/export?format=csv` | 导出审计日志，`format` 为 `csv` 或 `json` | `X-Admin-Token` |
+| `GET` | `/api/site-info` | 运营主体与隐私联系公开字段；`configured` 表示是否已完整配置 | 无 |
 
 留言状态只有四种：`visible`（公开）、`pending`（待审）、`hidden`（隐藏）、`removed`（已移除）。公开列表只返回 `visible`；创建留言命中审核时响应会带 `pending: true` 和提示文本，但不会立即出现在公开列表中。
 

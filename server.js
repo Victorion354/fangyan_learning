@@ -34,6 +34,7 @@ const { createRedis } = require('./lib/redis.js');
 const { createObjectStore, audioExtension } = require('./lib/object-store.js');
 const { createModerator, parseKeywords } = require('./lib/moderation.js');
 const { createMailer } = require('./lib/mailer.js');
+const { loadSiteInfo } = require('./lib/site-info.js');
 const {
   normalizeUsername,
   validUsername,
@@ -111,10 +112,12 @@ const EMAIL_RESET_TTL_MS = (() => {
   return Math.min(value, 24 * 60 * 60 * 1000);
 })();
 const AUDIT_EXPORT_LIMIT = Math.min(20000, Math.max(100, Number(process.env.AUDIT_EXPORT_LIMIT) || 5000));
+const siteInfo = loadSiteInfo({ root: ROOT, env: process.env });
 const mailer = createMailer({
   provider: MAIL_PROVIDER,
   from: MAIL_FROM,
   fromName: MAIL_FROM_NAME,
+  replyTo: process.env.MAIL_REPLY_TO,
   resendApiKey: process.env.RESEND_API_KEY,
   sendgridApiKey: process.env.SENDGRID_API_KEY,
   timeoutMs: MAIL_TIMEOUT_MS
@@ -1082,6 +1085,15 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (pathname === '/api/site-info' && method === 'GET') {
+    sendJson(res, 200, {
+      configured: siteInfo.configured,
+      fields: siteInfo.fields,
+      missing: siteInfo.missing
+    });
+    return;
+  }
+
   if (pathname === '/api/health' && method === 'GET') {
     sendJson(res, 200, {
       ok: true,
@@ -1099,8 +1111,11 @@ async function handleApi(req, res, url) {
         moderation: moderator.enabled,
         reports: true,
         email: mailer.provider,
-        emailDelivery: mailer.enabled ? 'configured' : 'console-only',
-        auditLogs: true
+        emailDelivery: mailer.provider === 'disabled'
+          ? 'disabled'
+          : (mailer.enabled ? (mailer.provider === 'console' ? 'console-only' : 'configured') : 'disabled'),
+        auditLogs: true,
+        siteInfo: siteInfo.configured
       }
     });
     return;
@@ -1495,7 +1510,9 @@ const PRIVATE_FILES = new Set([
   '/docker-compose.yml',
   '/.gitignore',
   '/.dockerignore',
-  '/.env'
+  '/.env',
+  '/site-info.json',
+  '/site-info.example.json'
 ]);
 const PRIVATE_DIRS = [
   '/data',
@@ -1743,6 +1760,9 @@ async function start() {
     console.log('  邮件服务：' + mailer.provider + (mailer.enabled ? '' : '（不会真实发信）') +
       ' / 发件人 ' + MAIL_FROM);
     console.log('  审计日志：已启用（管理员操作写入数据库）');
+    console.log('  运营主体信息：' + (siteInfo.configured
+      ? '已配置（' + siteInfo.fields.operatorName + '）'
+      : '未配置（隐私页显示“上线前补充”，上线前请填写 site-info.json 或环境变量）'));
     console.log('  旧社区 JSON：' + COMMUNITY_FILE + '（仅首次导入）');
     console.log('  人口数据：' + POPULATION_FILE);
     console.log('  按 Ctrl+C 停止。');

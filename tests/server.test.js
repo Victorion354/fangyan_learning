@@ -156,7 +156,15 @@ before(async () => {
       DATABASE_URL: '',
       DB_DRIVER: 'sqlite',
       REDIS_URL: '',
-      S3_BUCKET: ''
+      S3_BUCKET: '',
+      SITE_INFO_FILE: path.join(tempDir, 'site-info.json'),
+      OPERATOR_NAME: '',
+      OPERATOR_ADDRESS: '',
+      PRIVACY_EMAIL: '',
+      PRIVACY_CONTACT_NAME: '',
+      COMPLAINT_CONTACT: '',
+      SUPERVISOR_CONTACT: '',
+      DATA_REGION: ''
     }),
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -194,6 +202,19 @@ test('健康检查返回服务状态与十个板块', async () => {
   assert.equal(data.features.redis, false);
   assert.equal(data.features.objectStorage, false);
   assert.equal(data.features.uploads, 'inline');
+  assert.equal(data.features.siteInfo, false);
+});
+
+test('未配置运营主体时 /api/site-info 不返回虚构信息', async () => {
+  const { status, data } = await jsonFetch('/api/site-info');
+  assert.equal(status, 200);
+  assert.equal(data.configured, false);
+  assert.equal(data.fields.operatorName, '');
+  assert.equal(data.fields.operatorAddress, '');
+  assert.equal(data.fields.privacyEmail, '');
+  assert.ok(data.missing.includes('operatorName'));
+  assert.ok(data.missing.includes('operatorAddress'));
+  assert.ok(data.missing.includes('privacyEmail'));
 });
 
 test('未配置对象存储时上传签名与 audioKey 返回 503', async () => {
