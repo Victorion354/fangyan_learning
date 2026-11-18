@@ -10,6 +10,7 @@ const { createStore } = require('../lib/store.js');
 const { createRedis } = require('../lib/redis.js');
 const { createObjectStore, audioExtension, derivePublicBase } = require('../lib/object-store.js');
 const { loadSiteInfo } = require('../lib/site-info.js');
+const { resolvePublicBaseUrl } = require('../lib/public-url.js');
 const { createMailer } = require('../lib/mailer.js');
 
 test('默认创建 SQLite 数据层并可用', async () => {
@@ -55,6 +56,42 @@ test('对象存储公开地址与音频扩展名推导', () => {
   assert.equal(audioExtension('audio/webm; codecs=opus'), '.webm');
   assert.equal(audioExtension('audio/mpeg'), '.mp3');
   assert.equal(audioExtension('text/plain'), '');
+});
+
+test('对外地址只信任 PUBLIC_BASE_URL 或可信代理头', () => {
+  assert.equal(
+    resolvePublicBaseUrl({ publicBaseUrl: 'https://fangyan.example' }),
+    'https://fangyan.example'
+  );
+
+  /* 未声明 TRUST_PROXY 时忽略伪造的转发头 */
+  assert.equal(
+    resolvePublicBaseUrl({
+      forwardedHost: 'evil.example',
+      forwardedProto: 'https',
+      host: 'good.example:8787',
+      port: 8787
+    }),
+    'http://good.example:8787'
+  );
+
+  /* 显式信任代理后才使用转发头 */
+  assert.equal(
+    resolvePublicBaseUrl({
+      trustProxy: true,
+      forwardedHost: 'fangyan.example',
+      forwardedProto: 'https',
+      host: 'app:8787',
+      port: 8787
+    }),
+    'https://fangyan.example'
+  );
+
+  /* 非法 Host 回退到本地地址 */
+  assert.equal(
+    resolvePublicBaseUrl({ host: 'bad host<script>', port: 8787 }),
+    'http://localhost:8787'
+  );
 });
 
 test('运营主体信息从带 BOM 的 JSON 读取并由环境变量覆盖', () => {

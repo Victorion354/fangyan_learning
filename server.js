@@ -35,6 +35,7 @@ const { createObjectStore, audioExtension } = require('./lib/object-store.js');
 const { createModerator, parseKeywords } = require('./lib/moderation.js');
 const { createMailer } = require('./lib/mailer.js');
 const { loadSiteInfo } = require('./lib/site-info.js');
+const { resolvePublicBaseUrl } = require('./lib/public-url.js');
 const {
   normalizeUsername,
   validUsername,
@@ -332,13 +333,15 @@ async function writeAudit(req, action, options) {
 }
 
 function publicBaseUrl(req) {
-  if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL;
-  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() ||
-    ((req.socket && req.socket.encrypted) ? 'https' : 'http');
-  const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '')
-    .split(',')[0].trim();
-  const host = /^[A-Za-z0-9.\-:\[\]]{1,255}$/.test(rawHost) ? rawHost : 'localhost:' + PORT;
-  return proto + '://' + host;
+  return resolvePublicBaseUrl({
+    publicBaseUrl: PUBLIC_BASE_URL,
+    trustProxy: TRUST_PROXY,
+    forwardedProto: req.headers['x-forwarded-proto'],
+    forwardedHost: req.headers['x-forwarded-host'],
+    host: req.headers.host,
+    encrypted: !!(req.socket && req.socket.encrypted),
+    port: PORT
+  });
 }
 
 function maskEmail(email) {

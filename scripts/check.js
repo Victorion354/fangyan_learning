@@ -121,6 +121,7 @@ const scriptFiles = new Set([
   'lib/moderation.js',
   'lib/mailer.js',
   'lib/site-info.js',
+  'lib/public-url.js',
   'scripts/init-s3.js',
   'scripts/demo-data.js',
   'scripts/mail-test.js',

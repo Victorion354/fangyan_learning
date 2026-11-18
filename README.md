@@ -104,6 +104,7 @@ lib/
   accounts.js           scrypt 密码哈希、用户名/邮箱校验、账号与邮箱令牌
   mailer.js             邮件适配层（console / Resend / SendGrid，零依赖 HTTPS API）
   site-info.js          运营主体与隐私联系信息加载（JSON / 环境变量）
+  public-url.js         对外地址解析（PUBLIC_BASE_URL / 可信代理头）
   moderation.js         垃圾广告/诈骗等关键词过滤与广告特征检测
   community-store.js    SQLite 数据层（Node 内置 node:sqlite，开发默认）
   postgres-store.js     PostgreSQL 数据层（生产可选）
@@ -250,7 +251,7 @@ UPLOAD_TTL_SECONDS=300
 
 社区写操作使用服务端签发的匿名会话：页面先请求 `POST /api/session`，服务端返回带过期时间的 HMAC 签名令牌与随机客户端 ID，后续通过 `X-Client-Token` 或 `Authorization: Bearer <token>` 提交。读取接口仍兼容旧的 `X-Client-Id`，但发布和点赞不再接受只带客户端 ID 的请求。设置固定的 `CLIENT_TOKEN_SECRET` 后，服务重启不会让已签发令牌立即失效。
 
-测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入、对象存储未配置时的降级行为、人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化、旧 JSON 导入、旧库缺列升级和数据层/对象存储适配器；账号测试覆盖注册校验、大小写不敏感重名、登录/退出、隐私同意、邮箱验证、忘记密码与重置、账号留言归属与删除、关键词待审、举报去重与阈值、管理员接口、管理员审计日志与 CSV/JSON 导出、数据导出与注销；适配器测试覆盖运营主体配置加载、缺失字段/非法邮箱与邮件服务商选择。当前共 63 项测试。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
+测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入、对象存储未配置时的降级行为、人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化、旧 JSON 导入、旧库缺列升级和数据层/对象存储适配器；账号测试覆盖注册校验、大小写不敏感重名、登录/退出、隐私同意、邮箱验证、忘记密码与重置、账号留言归属与删除、关键词待审、举报去重与阈值、管理员接口、管理员审计日志与 CSV/JSON 导出、数据导出与注销；适配器测试覆盖运营主体配置加载、缺失字段/非法邮箱、对外地址解析与邮件服务商选择。当前共 64 项测试。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
 
 `server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。
 
@@ -359,6 +360,8 @@ RESEND_API_KEY=...              # 使用 Resend 时填写
 SENDGRID_API_KEY=...            # 使用 SendGrid 时填写
 PUBLIC_BASE_URL=https://你的域名
 ```
+
+`PUBLIC_BASE_URL` 用于生成邮件里的验证与重置链接。未设置时，只有 `TRUST_PROXY=true` 才会读取 `X-Forwarded-Host` / `X-Forwarded-Proto`，否则使用请求自身的 Host；正式环境务必显式设置，避免伪造转发头把链接指向错误域名。
 
 配置后可先发送测试邮件：
 
