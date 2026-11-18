@@ -4,9 +4,11 @@
   var CM_TOKEN_KEY='fangyan-delete-tokens-v1';
   var CM_SESSION_KEY='fangyan-session-v1';
   var CM_TYPES={dialect:'家乡话',suggest:'建议'};
+  var CM_PAGE_SIZE=20;
   var cmPosts=[],cmFilter='all',cmProvince='',cmReply=null,cmAudio=null,cmAudioName='',cmAudioFile=null;
   var cmRecording=null,cmStream=null,cmCurrent=null,cmInitialized=false;
   var cmMode='local',cmEventSource=null,cmRefreshTimer=null,cmRetryTimer=null,cmClientId='',cmServerChecked=false,cmSession=null,cmUploads=false;
+  var cmNextCursor=null,cmHasMore=false,cmCounts={},cmLoadingMore=false,cmPageSeq=0;
 
   function cmEsc(s){
     return String(s==null?'':s).replace(/[&<>"']/g,function(c){
@@ -172,30 +174,75 @@
     return null;
   }
   function cmBoardTotal(id){
+    if(cmMode==='server')return Math.max(0,Number(cmCounts[id])||0);
     return cmPosts.filter(function(p){return p.board===id}).length;
   }
   function cmScheduleRefresh(){
     clearTimeout(cmRefreshTimer);
     cmRefreshTimer=setTimeout(function(){cmRefreshPosts()},180);
   }
-  function cmRefreshPosts(){
+  function cmFetchPosts(mode){
+    var seq=cmPageSeq;
+    var headers=Object.assign(
+      cmSessionValid(cmSession)?{'X-Client-Token':cmSession.token}:{'X-Client-Id':cmClientId},
+      cmAuthHeader()
+    );
+    var qs='?limit='+CM_PAGE_SIZE;
+    if(cmCurrent&&cmCurrent.id)qs+='&board='+encodeURIComponent(cmCurrent.id);
+    if(mode==='more'&&cmNextCursor)qs+='&before='+encodeURIComponent(cmNextCursor);
+    return fetch(cmApi('/api/community'+qs),{cache:'no-store',headers:headers})
+      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
+      .then(function(j){
+        if(seq!==cmPageSeq)return null;
+        if(!j||!Array.isArray(j.posts))throw new Error('响应格式不正确');
+        if(j.counts&&typeof j.counts==='object')cmCounts=j.counts;
+        if(mode==='more'){
+          var seen={};
+          cmPosts.forEach(function(p){seen[p.id]=1});
+          j.posts.forEach(function(p){if(!seen[p.id]){seen[p.id]=1;cmPosts.push(p)}});
+          cmNextCursor=j.nextCursor||null;
+          cmHasMore=!!j.hasMore;
+        }else if(mode==='reset'){
+          cmPosts=j.posts;
+          cmNextCursor=j.nextCursor||null;
+          cmHasMore=!!j.hasMore;
+        }else{
+          /* 合并第一页：保留已经加载的旧页，同时拿到新留言与最新计数 */
+          var known={},merged=[];
+          j.posts.forEach(function(p){if(!known[p.id]){known[p.id]=1;merged.push(p)}});
+          cmPosts.forEach(function(p){if(!known[p.id]){known[p.id]=1;merged.push(p)}});
+          merged.sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0)});
+          cmPosts=merged;
+          if(!cmNextCursor)cmNextCursor=j.nextCursor||null;
+          if(!cmHasMore)cmHasMore=!!j.hasMore;
+        }
+        return j;
+      });
+  }
+  function cmRefreshPosts(reset){
     if(cmMode!=='server'){
       cmPosts=cmLoad();
       cmRender(cmCurrent);
       return Promise.resolve(false);
     }
-    var headers=Object.assign(
-      cmSessionValid(cmSession)?{'X-Client-Token':cmSession.token}:{'X-Client-Id':cmClientId},
-      cmAuthHeader()
-    );
-    return fetch(cmApi('/api/community'),{cache:'no-store',headers:headers})
-      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
-      .then(function(j){
-        if(j&&Array.isArray(j.posts))cmPosts=j.posts;
-        cmRender(cmCurrent);
-        return true;
-      })
-      .catch(function(){return false});
+    if(reset)cmPageSeq+=1;
+    return cmFetchPosts(reset?'reset':'merge').then(function(){
+      cmRender(cmCurrent);
+      return true;
+    }).catch(function(){return false});
+  }
+  function cmLoadMore(){
+    if(cmMode!=='server'||!cmHasMore||cmLoadingMore)return;
+    cmLoadingMore=true;
+    cmRenderPosts(cmCurrent);
+    cmFetchPosts('more').then(function(){
+      cmLoadingMore=false;
+      cmRenderPosts(cmCurrent);
+    }).catch(function(err){
+      cmLoadingMore=false;
+      cmRenderPosts(cmCurrent);
+      toast((err&&err.message)||'加载失败，请稍后重试');
+    });
   }
   function cmConnectServer(){
     if(cmServerChecked)return;
@@ -211,7 +258,7 @@
         return cmEnsureSession().then(function(){
           cmSetMode('server');
           clearTimeout(cmRetryTimer);
-          return cmRefreshPosts().then(function(){
+          return cmRefreshPosts(true).then(function(){
             if(cmEventSource)return;
             try{
               cmEventSource=new EventSource(cmApi('/api/community/stream')+'?clientId='+encodeURIComponent(cmClientId));
@@ -241,7 +288,10 @@
       body:JSON.stringify(post)
     }).then(function(j){
       if(j&&j.post){
-        if(!j.pending)cmPosts.unshift(j.post);
+        if(!j.pending){
+          cmPosts.unshift(j.post);
+          cmCounts[j.post.board]=(Number(cmCounts[j.post.board])||0)+1;
+        }
         if(j.deleteToken)cmRememberToken(j.post.id,j.deleteToken);
         cmRender(cmCurrent);
       }
@@ -295,8 +345,12 @@
     }).then(function(r){
       return r.json().then(function(j){if(!r.ok)throw new Error((j&&j.error)||('HTTP '+r.status));return j});
     }).then(function(){
+      var removed=cmFind(id);
       cmForgetToken(id);
       cmPosts=cmPosts.filter(function(p){return p.id!==id});
+      if(removed&&cmCounts[removed.board]){
+        cmCounts[removed.board]=Math.max(0,cmCounts[removed.board]-1);
+      }
       cmRender(cmCurrent);
     });
   }
@@ -306,7 +360,17 @@
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({reason:reason})
     }).then(function(j){
-      toast(j&&j.hidden?'已收到举报，留言已转入待审':'已收到举报，管理员会尽快处理');
+      if(j&&j.hidden){
+        var reported=cmFind(id);
+        cmPosts=cmPosts.filter(function(p){return p.id!==id});
+        if(reported&&cmCounts[reported.board]){
+          cmCounts[reported.board]=Math.max(0,cmCounts[reported.board]-1);
+        }
+        cmRender(cmCurrent);
+        toast('已收到举报，留言已转入待审');
+        return;
+      }
+      toast('已收到举报，管理员会尽快处理');
       return cmRefreshPosts();
     });
   }
@@ -321,6 +385,12 @@
     var html=(all?'<option value="">全部省份</option>':'')+d.provinces.map(function(n){return '<option value="'+cmEsc(n)+'">'+cmEsc(n)+'</option>'}).join('');
     sel.innerHTML=html;
   }
+  function cmMoreButton(){
+    if(cmMode!=='server'||!cmHasMore)return '';
+    return '<div class="cm-more"><button type="button" class="cm-more-btn" data-more'+
+      (cmLoadingMore?' disabled aria-busy="true"':'')+'>'+
+      (cmLoadingMore?'正在加载…':'加载更多留言')+'</button></div>';
+  }
   function cmRenderPosts(d){
     var list=cmPosts.filter(function(p){return p.board===d.id})
       .filter(function(p){return !cmProvince||p.province===cmProvince})
@@ -330,17 +400,20 @@
     if(!list.length){
       var title=total?'没有符合筛选条件的留言':'「'+d.name+'」板块还没有留言';
       var sub=total?'换一个筛选条件，或者自己也留一句。':'来做第一个用家乡话打招呼的人吧。';
-      $('#cm-list').innerHTML='<div class="cm-empty"><b>'+cmEsc(title)+'</b><p>'+cmEsc(sub)+'</p><button type="button" class="cm-write" data-write>写第一句</button></div>';
+      $('#cm-list').innerHTML='<div class="cm-empty"><b>'+cmEsc(title)+'</b><p>'+cmEsc(sub)+'</p><button type="button" class="cm-write" data-write>写第一句</button></div>'+cmMoreButton();
       return;
     }
-    $('#cm-list').innerHTML=list.map(function(p){
+    var html=list.map(function(p){
       var type=CM_TYPES[p.type]||'家乡话';
       var color=(cmBoardById(p.board)||{}).color||'#B07C2A';
       var canDelete=cmMode!=='server'||!!cmTokenFor(p.id)||!!p.mine;
-      var audio=(p.audio&&/^(data:audio\/|https?:\/\/)/.test(p.audio))?'<audio class="cm-audio-player" controls preload="metadata" src="'+cmEsc(p.audio)+'"></audio>':'';
+      var audioSrc=p.audio||p.audioUrl||'';
+      var hasAudio=!!(p.hasAudio||audioSrc);
+      /* 语音按需加载：列表只带地址，preload="none" 在点击播放时才真正请求 */
+      var audio=(audioSrc&&/^(data:audio\/|https?:\/\/|\/api\/community\/)/.test(audioSrc))?'<audio class="cm-audio-player" controls preload="none" src="'+cmEsc(audioSrc)+'"></audio>':'';
       return '<article class="cm-post" data-id="'+cmEsc(p.id)+'">'+
         '<div class="cm-post-head"><span class="cm-avatar" style="--hc:'+cmEsc(color)+'">'+cmEsc((p.name||'乡').slice(0,1))+'</span>'+
-        '<div class="cm-who"><b>'+cmEsc(p.name||'匿名乡音')+'</b><span>'+cmEsc(p.province||'未填省份')+' · '+cmEsc(type)+(p.audio?' · 语音':'')+'</span></div>'+
+        '<div class="cm-who"><b>'+cmEsc(p.name||'匿名乡音')+'</b><span>'+cmEsc(p.province||'未填省份')+' · '+cmEsc(type)+(hasAudio?' · 语音':'')+'</span></div>'+
         '<time datetime="'+new Date(p.createdAt).toISOString()+'">'+cmTime(p.createdAt)+'</time></div>'+
         (p.replyTo?'<div class="cm-reply-to">回复 @'+cmEsc(p.replyTo)+'</div>':'')+
         '<p class="cm-text">'+cmEsc(p.text)+'</p>'+audio+
@@ -355,6 +428,8 @@
         '</form>':'')+
         '</article>';
     }).join('');
+    html+=cmMoreButton();
+    $('#cm-list').innerHTML=html;
   }
   function cmRender(d){
     if(!d||!$('#cm-boards'))return;
@@ -435,7 +510,7 @@
     cmInitialized=true;
 
     window.addEventListener('fangyan:account',function(){
-      if(cmMode==='server')cmRefreshPosts();
+      if(cmMode==='server')cmRefreshPosts(true);
     });
     window.addEventListener('fangyan:community-refresh',function(){
       if(cmMode==='server')cmRefreshPosts();
@@ -449,7 +524,15 @@
       cmCurrent=b;
       cmProvince='';
       cmSelectTab('all');
-      cmRender(cmCurrent);
+      if(cmMode==='server'){
+        cmPosts=[];
+        cmNextCursor=null;
+        cmHasMore=false;
+        cmRender(cmCurrent);
+        cmRefreshPosts(true);
+      }else{
+        cmRender(cmCurrent);
+      }
     });
     $('#cm-write').addEventListener('click',function(){cmOpenForm(null)});
     $('#cm-close').addEventListener('click',cmCloseForm);
@@ -469,6 +552,8 @@
     $('#cm-list').addEventListener('click',function(e){
       var write=e.target.closest('[data-write]');
       if(write){cmOpenForm(null);return}
+      var more=e.target.closest('[data-more]');
+      if(more){cmLoadMore();return}
       var like=e.target.closest('[data-like]');
       if(like){
         var p=cmFind(like.getAttribute('data-like'));

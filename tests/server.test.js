@@ -568,6 +568,86 @@ test('发布留言返回一次性删除令牌且不泄漏哈希', async () => {
   assert.equal(removed.status, 200);
 });
 
+test('社区列表支持游标分页并返回板块计数', async () => {
+  const session = await createSession();
+  const created = [];
+  for (let i = 0; i < 3; i++) {
+    const res = await createPost(session, { text: '分页测试 ' + i });
+    assert.equal(res.status, 201);
+    created.push(res.data);
+  }
+  const ids = created.map((item) => item.post.id);
+
+  try {
+    const first = await jsonFetch('/api/community?board=guangzhou&limit=2');
+    assert.equal(first.status, 200);
+    assert.equal(first.data.posts.length, 2);
+    assert.equal(first.data.hasMore, true);
+    assert.ok(first.data.nextCursor);
+    assert.ok(first.data.counts.guangzhou >= 3, '应返回按板块统计的公开留言数');
+
+    let cursor = first.data.nextCursor;
+    let all = first.data.posts.slice();
+    let guard = 0;
+    while (cursor && guard < 10) {
+      const page = await jsonFetch(
+        '/api/community?board=guangzhou&limit=2&before=' + encodeURIComponent(cursor)
+      );
+      assert.equal(page.status, 200);
+      all = all.concat(page.data.posts);
+      cursor = page.data.nextCursor;
+      guard += 1;
+    }
+    assert.equal(cursor, null, '最后一页不应再返回游标');
+
+    const seen = all.map((p) => p.id);
+    assert.equal(new Set(seen).size, seen.length, '分页结果不应重复');
+    for (const id of ids) assert.ok(seen.includes(id), '分页应覆盖新建留言：' + id);
+
+    const invalid = await jsonFetch('/api/community?before=not-a-cursor');
+    assert.equal(invalid.status, 400);
+  } finally {
+    for (const item of created) {
+      await jsonFetch('/api/community/' + item.post.id, {
+        method: 'DELETE',
+        headers: { 'X-Delete-Token': item.deleteToken }
+      });
+    }
+  }
+});
+
+test('列表只返回语音元数据，播放时再按需读取音频', async () => {
+  const session = await createSession();
+  const audio = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+  const created = await createPost(session, { text: '语音按需加载测试', audio: audio });
+  assert.equal(created.status, 201);
+  const id = created.data.post.id;
+  assert.equal(created.data.post.audio, audio, '发布响应保留内联语音，便于立即播放');
+
+  const list = await jsonFetch('/api/community?board=guangzhou&limit=50');
+  assert.equal(list.status, 200);
+  const found = list.data.posts.find((p) => p.id === id);
+  assert.ok(found);
+  assert.equal(found.audio, null, '列表不应返回内联 data URI');
+  assert.equal(found.hasAudio, true);
+  assert.equal(found.audioUrl, '/api/community/' + id + '/audio');
+
+  const audioRes = await fetch(base + found.audioUrl);
+  assert.equal(audioRes.status, 200);
+  assert.match(audioRes.headers.get('content-type') || '', /^audio\/wav/);
+  const bytes = Buffer.from(await audioRes.arrayBuffer());
+  assert.equal(bytes.toString('base64'), audio.split(',')[1]);
+
+  const removed = await jsonFetch('/api/community/' + id, {
+    method: 'DELETE',
+    headers: { 'X-Delete-Token': created.data.deleteToken }
+  });
+  assert.equal(removed.status, 200);
+
+  const gone = await fetch(base + found.audioUrl);
+  assert.equal(gone.status, 404, '删除后语音不应再可读');
+});
+
 test('删除留言需要发布令牌', async () => {
   const session = await createSession();
   const created = await createPost(session, { text: '删除鉴权测试' });

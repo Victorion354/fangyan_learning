@@ -86,6 +86,8 @@ if (!read('lib/postgres-store.js').includes("requireOptional('pg')")) fail('Post
 if (!read('lib/redis.js').includes("requireOptional('redis')")) fail('Redis 适配层没有按需加载 redis');
 if (!read('lib/object-store.js').includes("requireOptional('@aws-sdk/client-s3')")) fail('对象存储适配层没有按需加载 S3 SDK');
 if (!community.includes('/api/uploads/sign')) fail('社区前端没有接入对象存储预签名上传');
+if (!server.includes('/audio$/')) fail('服务端没有提供社区语音按需读取接口');
+if (!community.includes('preload="none"')) fail('社区语音播放器没有使用 preload="none" 按需加载');
 if (!privacy.includes('src="assets/site-info.js')) fail('隐私政策页没有加载 assets/site-info.js');
 if (!privacy.includes('id="site-operator-name"')) fail('隐私政策页缺少运营主体信息占位');
 if (!server.includes("pathname === '/api/site-info'")) fail('服务端没有提供 /api/site-info');

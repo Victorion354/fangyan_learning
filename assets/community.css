@@ -62,6 +62,11 @@
 .cm-empty b{display:block;font-size:17px;color:var(--ink);margin-bottom:6px}
 .cm-empty p{font-size:14px}
 .cm-empty .cm-write{margin-top:14px}
+.cm-more{display:flex;justify-content:center;padding:6px 0 2px}
+.cm-more-btn{border:1px solid var(--line);background:#f8f1e4;border-radius:999px;padding:9px 22px;font:inherit;font-size:13px;color:var(--ink2);cursor:pointer;transition:.2s}
+.cm-more-btn:hover{border-color:var(--bamboo);color:var(--bamboo)}
+.cm-more-btn[disabled]{opacity:.6;cursor:default}
+.cm-more-btn:focus-visible{outline:2px solid var(--bamboo);outline-offset:2px}
 .cm-form{background:#fff7;border:1px solid var(--line);border-radius:4px 16px 4px 16px;padding:20px;margin-top:16px}
 .cm-form[hidden]{display:none}
 .cm-form-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}

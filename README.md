@@ -250,7 +250,7 @@ UPLOAD_TTL_SECONDS=300
 
 社区写操作使用服务端签发的匿名会话：页面先请求 `POST /api/session`，服务端返回带过期时间的 HMAC 签名令牌与随机客户端 ID，后续通过 `X-Client-Token` 或 `Authorization: Bearer <token>` 提交。读取接口仍兼容旧的 `X-Client-Id`，但发布和点赞不再接受只带客户端 ID 的请求。设置固定的 `CLIENT_TOKEN_SECRET` 后，服务重启不会让已签发令牌立即失效。
 
-测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入、对象存储未配置时的降级行为、人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化、旧 JSON 导入、旧库缺列升级和数据层/对象存储适配器；账号测试覆盖注册校验、大小写不敏感重名、登录/退出、隐私同意、邮箱验证、忘记密码与重置、账号留言归属与删除、关键词待审、举报去重与阈值、管理员接口、管理员审计日志与 CSV/JSON 导出、数据导出与注销；适配器测试覆盖运营主体配置加载、缺失字段/非法邮箱与邮件服务商选择。当前共 60 项测试。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
+测试覆盖健康检查、静态页面、敏感文件屏蔽、路径绕过、安全响应头、CSP、CORS 同源/白名单/拒绝、匿名会话签发/刷新/篡改/过期、发布/删除令牌、管理员删除、点赞去重、发布限流与 `Retry-After`、非法输入、对象存储未配置时的降级行为、人口接口，以及 SQLite 数据层的创建/点赞/删除/裁剪/重开持久化、旧 JSON 导入、旧库缺列升级和数据层/对象存储适配器；账号测试覆盖注册校验、大小写不敏感重名、登录/退出、隐私同意、邮箱验证、忘记密码与重置、账号留言归属与删除、关键词待审、举报去重与阈值、管理员接口、管理员审计日志与 CSV/JSON 导出、数据导出与注销；适配器测试覆盖运营主体配置加载、缺失字段/非法邮箱与邮件服务商选择。当前共 63 项测试。仓库还提供 `.github/workflows/ci.yml`，在 Node 22/24 上自动运行 `npm run check` 与 `npm test`。
 
 `server.js` 对所有响应附加基础安全响应头：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy: camera=(), microphone=(self), geolocation=()`。
 
@@ -462,6 +462,8 @@ npm run start:env
 | `GET` | `/api/me/export` | 导出账号、本人留言与举报记录 JSON | 账号 Bearer |
 | `DELETE` | `/api/account` | 注销账号；body 需 `password` | 账号 Bearer |
 | `POST` | `/api/community/:id/report` | 举报公开留言；body 可选 `reason` | 匿名会话令牌 |
+| `GET` | `/api/community?board=&limit=&before=` | 公开留言分页；`limit` 默认 50、最大 100，`before` 使用上一页返回的 `nextCursor`；响应含 `hasMore`、`nextCursor` 与按板块统计的 `counts` | 匿名会话令牌或 `X-Client-Id` |
+| `GET` | `/api/community/:id/audio` | 按需读取单条留言的语音；对象存储模式下 302 到公开地址，内联模式下直接返回音频字节 | 无 |
 | `GET` | `/api/admin/session` | 校验管理员令牌并返回操作者指纹与邮件配置状态 | `X-Admin-Token` |
 | `POST` | `/api/admin/session` | 管理员登录并写入审计日志 | `X-Admin-Token` |
 | `GET` | `/api/admin/overview` | 用户数、留言数、状态统计、未处理举报数 | `X-Admin-Token` |
@@ -474,6 +476,8 @@ npm run start:env
 | `GET` | `/api/site-info` | 运营主体与隐私联系公开字段；`configured` 表示是否已完整配置 | 无 |
 
 留言状态只有四种：`visible`（公开）、`pending`（待审）、`hidden`（隐藏）、`removed`（已移除）。公开列表只返回 `visible`；创建留言命中审核时响应会带 `pending: true` 和提示文本，但不会立即出现在公开列表中。
+
+公开列表按 `created_at + id` 复合游标分页，默认每页 50 条、最大 100 条。列表只返回语音元数据（`hasAudio`、`audioUrl`），不会把内联 data URI 一起返回；前端使用 `preload="none"`，用户点击播放时才请求 `/api/community/:id/audio`。这样即使没有配置对象存储，也不会因为一次列表请求返回数百 MB 数据。
 
 ## 人言乡音与录音说明
 
@@ -497,7 +501,7 @@ npm run start:env
 - **部分方言暂无授权录音**：官话、客家话、湘语、赣语、晋语、徽语、平话没有找到许可清晰的真人录音，页面如实留空。
 - **天地图需要自行申请 Key**：仓库不包含任何 Key；未配置时只能使用离线示意。在线底图需遵守天地图服务条款，公开发布前请确认 Key 的配额与使用范围。
 - **人口不是实时人口**：现有公开统计最晚只到 2012 年出版、2004 年人口口径，没有权威的 2026 年实时数据。
-- **社区服务仍是原型级防护**：已有账号、邮箱验证、密码找回、关键词先发后审、举报队列、数据导出、账号注销与管理审计日志；删除支持“发布令牌 + 管理员令牌 + 账号登录态”。但匿名会话令牌可自由申请、举报阈值可被多会话绕过、限流重启即清零，且没有双因素认证和自动数据保留任务，仍不是生产级方案；未设置 `CLIENT_TOKEN_SECRET` 时重启会让旧匿名令牌失效。
+- **社区服务尚未达到公开运营级防护**：已有账号、邮箱验证、密码找回、关键词先发后审、举报队列、数据导出、账号注销与管理审计日志；删除支持“发布令牌 + 管理员令牌 + 账号登录态”。公开列表已支持分页与语音按需加载，但匿名会话令牌可自由申请、举报阈值可被多会话绕过、限流重启即清零，且没有双因素认证和自动数据保留任务；未设置 `CLIENT_TOKEN_SECRET` 时重启会让旧匿名令牌失效。
 - **源码屏蔽只覆盖自带 Node 服务**：`server.js` 会拒绝访问 `server.js`、`README.md`、`*.py`、`data/`、`.git/` 等敏感路径；如果改用 `python -m http.server` 或普通静态托管，这些文件仍可能被直接下载，请不要把项目根目录原样公开到公网。
 - **共享数据已收拢**：方言名称、颜色、省份、历史、风俗和地图范围统一在 `assets/data/dialects.js`，主页、详情页、社区和服务端都从这一份数据读取；修改方言信息时只需要改这个文件。
 - **注音与用词需要母语者审校**：页面混用粤拼、白话字/台罗及近音标注，部分方言词使用民间借字或近音字写法。

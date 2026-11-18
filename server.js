@@ -60,6 +60,8 @@ const POPULATION_FILE = process.env.POPULATION_FILE ? path.resolve(process.env.P
 const PORT = Number(process.env.PORT) || 8787;
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_POSTS = 500;
+const COMMUNITY_PAGE_DEFAULT = 50;
+const COMMUNITY_PAGE_MAX = 100;
 const MAX_AUDIO_CHARS = 2400000;
 const MAX_AUDIO_BYTES = Math.floor(1.5 * 1024 * 1024);
 const MAX_BODY_BYTES = 3200000;
@@ -543,13 +545,22 @@ function loadCommunity() {
   }
 }
 
-function publicPost(post, viewer) {
+function publicPost(post, viewer, options) {
   if (!post) return null;
+  const opts = options || {};
   const clientId = typeof viewer === 'string' ? viewer : (viewer && viewer.clientId) || null;
   const userId = viewer && typeof viewer === 'object' ? viewer.userId || null : null;
-  const audio = post.audio || (
-    post.audioKey && objectStore ? objectStore.publicUrl(post.audioKey) : null
-  );
+  const inlineAudio = typeof post.audio === 'string' && post.audio ? post.audio : null;
+  const storedAudio = post.audioKey && objectStore ? objectStore.publicUrl(post.audioKey) : null;
+  const hasAudio = !!(inlineAudio || storedAudio);
+  /* 列表只返回语音元数据，避免把内联 data URI 一起塞进响应；
+   * 对象存储的公开地址很小，可以直接返回。 */
+  const audioUrl = hasAudio
+    ? (storedAudio || '/api/community/' + encodeURIComponent(post.id) + '/audio')
+    : null;
+  const audio = opts.audio === 'meta'
+    ? (storedAudio || null)
+    : (inlineAudio || storedAudio);
   return {
     id: post.id,
     board: post.board,
@@ -558,6 +569,8 @@ function publicPost(post, viewer) {
     type: post.type,
     text: post.text,
     audio: audio,
+    audioUrl: audioUrl,
+    hasAudio: hasAudio,
     audioName: post.audioName,
     likes: Math.max(0, Number(post.likes) || 0),
     liked: !!post.liked,
@@ -570,13 +583,38 @@ function publicPost(post, viewer) {
 
 function adminPost(post) {
   if (!post) return null;
-  return Object.assign(publicPost(post, null), {
+  return Object.assign(publicPost(post, null, { audio: 'meta' }), {
     status: post.status || 'visible',
     reportCount: Math.max(0, Number(post.reportCount) || 0),
     userId: post.userId || null,
     audioKey: post.audioKey || null,
     consentAt: Number(post.consentAt) || 0
   });
+}
+
+/* 分页游标是 base64url(JSON)，对客户端不透明，避免暴露内部排序细节 */
+function encodeCommunityCursor(post) {
+  if (!post || !post.id) return null;
+  return Buffer.from(JSON.stringify({ t: Number(post.createdAt) || 0, id: post.id }))
+    .toString('base64url');
+}
+
+function decodeCommunityCursor(raw) {
+  const text = String(raw == null ? '' : raw).trim();
+  if (!text) return null;
+  if (text.length > 200) return { invalid: true };
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(text, 'base64url').toString('utf8'));
+  } catch (_) {
+    return { invalid: true };
+  }
+  if (!payload || typeof payload !== 'object') return { invalid: true };
+  const createdAt = Number(payload.t);
+  const id = String(payload.id == null ? '' : payload.id);
+  if (!Number.isFinite(createdAt) || createdAt <= 0) return { invalid: true };
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return { invalid: true };
+  return { createdAt: createdAt, id: id };
 }
 
 function clientIdFrom(req, url) {
@@ -1122,12 +1160,60 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === '/api/community' && method === 'GET') {
-    const board = url.searchParams.get('board');
-    const list = await store.list(board && BOARDS.has(board) ? board : null, clientId);
+    await rateLimit(req, 'community-read', 600, 60000);
+    const boardParam = url.searchParams.get('board');
+    const board = boardParam && BOARDS.has(boardParam) ? boardParam : null;
+    const rawLimit = Number(url.searchParams.get('limit'));
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(COMMUNITY_PAGE_MAX, Math.floor(rawLimit))
+      : COMMUNITY_PAGE_DEFAULT;
+    const before = decodeCommunityCursor(url.searchParams.get('before'));
+    if (before && before.invalid) throw httpError(400, '分页游标无效');
+    /* 多取一条用于判断是否还有下一页 */
+    const rows = await store.list(board, clientId, { before: before, limit: limit + 1 });
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const counts = await store.countByBoard();
     sendJson(res, 200, {
-      posts: list.map((p) => publicPost(p, viewer)),
+      posts: page.map((p) => publicPost(p, viewer, { audio: 'meta' })),
+      hasMore: hasMore,
+      nextCursor: hasMore ? encodeCommunityCursor(page[page.length - 1]) : null,
+      counts: counts,
       serverTime: Date.now()
     });
+    return;
+  }
+
+  /* 语音按需加载：列表只给地址，播放时才取音频字节 */
+  const audioMatch = pathname.match(/^\/api\/community\/([A-Za-z0-9_-]{1,64})\/audio$/);
+  if (audioMatch && (method === 'GET' || method === 'HEAD')) {
+    const post = await store.get(audioMatch[1], null);
+    if (!post || post.status !== 'visible') throw httpError(404, '语音不存在');
+    if (post.audioKey && objectStore) {
+      res.writeHead(302, {
+        'Location': objectStore.publicUrl(post.audioKey),
+        'Cache-Control': 'private, max-age=300'
+      });
+      res.end();
+      return;
+    }
+    const match = typeof post.audio === 'string'
+      ? /^data:(audio\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(post.audio)
+      : null;
+    if (!match) throw httpError(404, '语音不存在');
+    const bytes = Buffer.from(match[2], 'base64');
+    if (!bytes.length || bytes.length > MAX_AUDIO_BYTES) throw httpError(404, '语音不存在');
+    res.writeHead(200, {
+      'Content-Type': match[1],
+      'Content-Length': bytes.length,
+      'Cache-Control': 'private, max-age=3600',
+      'Content-Disposition': 'inline'
+    });
+    if (method === 'HEAD') {
+      res.end();
+      return;
+    }
+    res.end(bytes);
     return;
   }
 

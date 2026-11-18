@@ -75,6 +75,46 @@ test('SQLite 存储支持创建、点赞、取消点赞与删除', () => {
   }
 });
 
+test('SQLite 列表支持游标分页并按板块统计', () => {
+  const { dir, store } = makeStore();
+  try {
+    const base = Date.now();
+    for (let i = 0; i < 5; i++) {
+      store.create(samplePost('p-page-' + i, {
+        board: i % 2 === 0 ? 'guangzhou' : 'shanghai',
+        createdAt: base + i * 1000
+      }));
+    }
+
+    const first = store.list(null, null, { limit: 2 });
+    assert.deepEqual(first.map((p) => p.id), ['p-page-4', 'p-page-3']);
+
+    const second = store.list(null, null, {
+      limit: 2,
+      before: { createdAt: first[1].createdAt, id: first[1].id }
+    });
+    assert.deepEqual(second.map((p) => p.id), ['p-page-2', 'p-page-1']);
+
+    const third = store.list(null, null, {
+      limit: 2,
+      before: { createdAt: second[1].createdAt, id: second[1].id }
+    });
+    assert.deepEqual(third.map((p) => p.id), ['p-page-0']);
+
+    const boardPage = store.list('shanghai', null, { limit: 1 });
+    assert.deepEqual(boardPage.map((p) => p.id), ['p-page-3']);
+
+    assert.deepEqual(store.countByBoard(), { guangzhou: 3, shanghai: 2 });
+
+    /* 非法游标应被忽略，回退到默认排序 */
+    const fallback = store.list(null, null, { limit: 1, before: { createdAt: 'x', id: 'p1' } });
+    assert.deepEqual(fallback.map((p) => p.id), ['p-page-4']);
+  } finally {
+    store.close();
+    cleanup(dir);
+  }
+});
+
 test('从旧 community.json 导入留言、点赞和删除令牌', () => {
   const { dir, store } = makeStore();
   try {
