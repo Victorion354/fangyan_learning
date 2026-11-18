@@ -328,6 +328,17 @@ docker compose up -d --build
 - Redis 不可用时服务会回退到单实例内存限流；生产环境建议监控 Redis 连接。
 - 账号、内容审核、举报、邮箱验证、密码找回、管理审计日志与隐私流程已接入，但仍缺少双因素认证和自动化数据保留任务，**不能直接当作公开上线服务**。
 
+### 部署到 Zeabur（无服务器方案）
+
+如果手上没有 VPS 或域名，可以用 Zeabur 直接构建仓库里的 `Dockerfile`，并配一个 Zeabur PostgreSQL 提供数据层：
+
+1. 把仓库推到 GitHub；
+2. 在 Zeabur 项目里先建 PostgreSQL，再部署本仓库；
+3. 设置 `DATABASE_URL=${POSTGRES_CONNECTION_STRING}`、`CLIENT_TOKEN_SECRET`、`COMMUNITY_ADMIN_TOKEN`、`TRUST_PROXY=true`；
+4. 生成 `*.zeabur.app` 域名，把 `PUBLIC_BASE_URL` 回填成该地址。
+
+完整步骤、变量清单、端口规则、验证项与常见问题见 [`deploy/zeabur.md`](deploy/zeabur.md)。容器文件系统在重启后会重置，因此该方案必须使用 PostgreSQL，不能沿用默认 SQLite。
+
 ## 上线前配置与部署自检
 
 ### 运营主体与隐私联系信息
