@@ -9,3 +9,5 @@ data/community.json.corrupt-*
 *.log
 .env
 .env.*
+site-info.json
+site-info.example.json

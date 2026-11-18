@@ -346,7 +346,7 @@ SUPERVISOR_CONTACT=监管对接渠道（可选）
 DATA_REGION=数据存储所在地（可选）
 ```
 
-服务启动时会读取这些信息，并通过 `GET /api/site-info` 返回公开字段。隐私政策页第十一节会自动填入已配置内容；未配置时保留“上线前补充”并显示明确提示。`/api/health` 的 `features.siteInfo` 会显示是否已配置。`site-info.json` 与 `site-info.example.json` 均不会被静态服务公开。
+服务启动时会读取这些信息，并通过 `GET /api/site-info` 返回公开字段。隐私政策页第十一节会自动填入已配置内容；未配置时保留“上线前补充”并显示明确提示。`/api/health` 的 `features.siteInfo` 会显示是否已配置。`site-info.json` 与 `site-info.example.json` 均不会被静态服务公开，也不会打进 Docker 镜像；容器部署建议使用环境变量，或把文件只读挂载到容器内（例如 `-v $(pwd)/site-info.json:/app/site-info.json:ro`），不要把真实运营信息写入镜像层。
 
 ### 正式邮件服务
 

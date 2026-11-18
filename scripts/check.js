@@ -95,6 +95,16 @@ for (const key of ['operatorName', 'operatorAddress', 'privacyEmail']) {
   if (!(key in siteInfoExample)) fail('site-info.example.json 缺少字段 ' + key);
   if (siteInfoExample[key]) fail('site-info.example.json 的 ' + key + ' 不应预置真实值');
 }
+/* 生产部署时静态文件由 Caddy / Nginx 直接托管，必须与 Node 一样屏蔽运营主体配置 */
+const caddyfile = read('deploy/Caddyfile');
+const nginxConf = read('deploy/nginx.conf');
+const dockerignore = read('.dockerignore');
+for (const file of ['/site-info.json', '/site-info.example.json']) {
+  if (!caddyfile.includes(file)) fail('deploy/Caddyfile 没有屏蔽 ' + file);
+}
+if (!nginxConf.includes('site-info\\.json')) fail('deploy/nginx.conf 没有屏蔽 site-info.json');
+if (!nginxConf.includes('site-info\\.example\\.json')) fail('deploy/nginx.conf 没有屏蔽 site-info.example.json');
+if (!dockerignore.includes('site-info.json')) fail('.dockerignore 没有排除 site-info.json');
 
 /* 3. 脚本语法 */
 const scriptFiles = new Set([
